@@ -1,8 +1,8 @@
-﻿YouTube Downloader Tkinter
+# ﻿YouTube Downloader Tkinter
 
 Aplicação simples com interface gráfica (Tkinter) para download de vídeos ou áudios do YouTube utilizando yt-dlp e FFmpeg.
 
-- Funcionalidades
+##- Funcionalidades
 
 Download de vídeos em MP4 compatível
 
@@ -14,7 +14,7 @@ Download executado em thread separada (não trava a interface)
 
 Criação automática de pastas (Videos e Audios)
 
-- Tecnologias
+## - Tecnologias
 
 Python 3
 
@@ -24,7 +24,8 @@ yt-dlp
 
 FFmpeg
 
-📂 Estrutura do repositório
+## Estrutura do repositório
+
 youtube-downloader-tkinter/
 │
 
@@ -40,7 +41,7 @@ youtube-downloader-tkinter/
 
 └── requirements.txt
 
-- Como executar
+## - Como executar
 
 pip install yt-dlp
 
@@ -50,3 +51,4 @@ winget install "FFmpeg (Essentials Build)"
 
 
 Este projeto é apenas para fins educacionais. O usuário é responsável por respeitar os termos de uso do YouTube e as leis de direitos autorais.
+
