@@ -8,5 +8,8 @@ Downloads/
 # Caderno de bordo local das sessões (skill finalizar-sessao)
 .claude/sessions/
 
+# Planos locais de produto e implementação
+.claude/plans/
+
 # Cache do pytest
 .pytest_cache/
