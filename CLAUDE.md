@@ -65,7 +65,8 @@ exclusivamente por uma `queue.Queue`, publicando eventos com `_emit(tipo, **payl
 - `download(url, file_format)` — orquestra: detecta playlist → extrai info → monta opções → baixa
 - `_build_opts(...)` — opções do yt-dlp (formato, template de saída, hooks)
 - `_make_progress_hook(...)` — traduz o progresso do yt-dlp em evento na fila
-- `ReportingLogger` — captura warning/error do yt-dlp e acumula em `summary.failed_items`
+- `ReportingLogger` — captura warning/error do yt-dlp e acumula em `summary.failed_items`; ao concluir,
+  `_reconcile_failure_reports` remove diagnósticos técnicos quando todos os itens previstos baixaram.
 
 ### 3. UI — `MediaDownloaderApp`
 Consome a fila por **polling**: `self.root.after(100, self._poll)` reagenda a cada 100 ms, drenando a

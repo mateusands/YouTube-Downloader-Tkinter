@@ -112,6 +112,7 @@ class DownloadManager:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 ydl.download([url])
 
+            self._reconcile_failure_reports(summary)
             self._emit("done", summary=summary)
         except Exception as exc:
             self._emit("error", message=str(exc))
@@ -230,6 +231,12 @@ class DownloadManager:
         if not playlist_mode:
             return 1
         return max(sum(1 for e in (info.get("entries") or []) if e), 1)
+
+    @staticmethod
+    def _reconcile_failure_reports(summary: DownloadSummary) -> None:
+        """Remove diagnósticos do extrator quando o resultado final foi íntegro."""
+        if summary.total_items and summary.downloaded_count >= summary.total_items:
+            summary.failed_items.clear()
 
     def _emit(self, event_type: str, **payload: Any) -> None:
         self._q.put({"type": event_type, **payload})

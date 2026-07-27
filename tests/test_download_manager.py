@@ -6,18 +6,23 @@ CONTRATO
   partir de um dicionário que o yt-dlp devolve num formato variável:
   `_is_playlist_result(info)` — o que veio é mesmo uma playlist?
   `_count_items(info, playlist_mode)` — quantos itens serão baixados?
-  E o `ReportingLogger` traduz warning/error do yt-dlp em `summary.failed_items`.
+  E o `ReportingLogger` traduz warning/error do yt-dlp em `summary.failed_items`,
+  que o resumo final reconcilia com os itens efetivamente baixados.
 
 POR QUE EXISTE
   `ignoreerrors: True` faz o yt-dlp CONTINUAR a playlist quando um item falha e
   colocar `None` no lugar da entrada quebrada. Sem isso, `_count_items` contaria
   buracos como itens e o resumo final mentiria para o usuário. O modo playlist
   também é reavaliado aqui: a URL pode parecer playlist e o resultado vir único.
+  Além disso, o yt-dlp pode registrar diagnóstico técnico como erro e ainda
+  concluir o download; sem reconciliação, o resumo mostra uma falha falsa.
 
 REGRA DE NEGÓCIO
   - Entrada `None` numa playlist é buraco, não item.
   - A contagem nunca é zero (mínimo 1), senão a barra de progresso divide por zero.
   - Falha repetida não é listada duas vezes no resumo.
+  - Se todos os itens previstos foram baixados, diagnósticos do extrator não são
+    exibidos como falhas ao usuário.
 """
 
 import queue
@@ -116,3 +121,27 @@ class TestRelatoDeFalhas:
 
         assert resumo.failed_items == []
         assert fila.empty()
+
+
+class TestResumoDeFalhas:
+    def test_deve_ignorar_alerta_tecnico_quando_todos_os_itens_foram_baixados(self):
+        resumo = DownloadSummary(
+            total_items=1,
+            downloaded_count=1,
+            failed_items=["[youtube] No supported JavaScript runtime could be found."],
+        )
+
+        DownloadManager._reconcile_failure_reports(resumo)
+
+        assert resumo.failed_items == []
+
+    def test_deve_manter_falha_quando_nem_todos_os_itens_foram_baixados(self):
+        resumo = DownloadSummary(
+            total_items=2,
+            downloaded_count=1,
+            failed_items=["Private video"],
+        )
+
+        DownloadManager._reconcile_failure_reports(resumo)
+
+        assert resumo.failed_items == ["Private video"]
