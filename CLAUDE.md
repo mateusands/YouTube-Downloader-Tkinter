@@ -24,6 +24,8 @@ camadas (ver abaixo). Leia a camada relevante antes de mudar.
 - **Python 3.10+** (o ambiente local está em 3.14)
 - **yt-dlp** — download e extração de metadados
 - **mutagen** — leitura e escrita de tags ID3 e capa em MP3
+- **Pillow** — redimensiona as capas exibidas na revisão de metadata. É importado no topo de `app.py`:
+  sem ele o aplicativo **não abre**, mesmo que ninguém use a opção de metadata.
 - **CustomTkinter** — widgets dark mode sobre Tkinter
 - **FFmpeg** (binário do sistema) — obrigatório para MP3 e para juntar vídeo+áudio em MP4
 - **pytest** — suíte da lógica pura (backend), sem abrir janela
@@ -168,8 +170,10 @@ Conventional Commits: `feat: adiciona escolha de qualidade`, `fix: trata playlis
 ## Armadilhas ativas
 
 1. **FFmpeg é obrigatório e a falha é confusa.** MP3 usa o postprocessor `FFmpegExtractAudio`; MP4 usa
-   `merge_output_format` (o yt-dlp baixa vídeo e áudio separados e junta). Sem FFmpeg no PATH, o download
-   parece progredir e falha na conversão, com mensagem que não diz "instale o ffmpeg".
+   `merge_output_format` (o yt-dlp baixa vídeo e áudio separados e junta). Com a opção de metadata ligada
+   entram também `FFmpegMetadata` e `EmbedThumbnail`, com `writethumbnail` — tudo depende do mesmo binário.
+   Sem FFmpeg no PATH, o download parece progredir e falha na conversão, com mensagem que não diz
+   "instale o ffmpeg".
 
 2. **yt-dlp quebra sozinho.** O YouTube muda, e a versão instalada para de funcionar sem nada ter mudado
    no código. Erro de extração é **primeiro** suspeito de versão velha: `pip install -U yt-dlp`.
