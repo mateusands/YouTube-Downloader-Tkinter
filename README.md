@@ -52,12 +52,27 @@ pip install -r requirements.txt
 python src/app.py
 ```
 
+## Testes
+
+A logica de download, o diagnostico de metadata e a busca no catalogo ficam fora da camada grafica, entao a
+suite roda sem abrir janela e sem acessar a rede:
+
+```bash
+pip install -r requirements.txt -r requirements-dev.txt
+pytest
+```
+
 ## Estrutura do projeto
 
 ```
-yt/
+media-downloader/
 ├── src/
 │   └── app.py
+├── tests/
+│   ├── test_url.py
+│   ├── test_download_manager.py
+│   ├── test_music_metadata.py
+│   └── test_ui_controls.py
 ├── assets/
 │   ├── media-downloader-icon.svg
 │   ├── media-downloader-icon.png
@@ -67,9 +82,11 @@ yt/
 │   ├── videos_unicos/
 │   ├── playlist_audio/
 │   └── playlist_video/
+├── pytest.ini
+├── requirements.txt
+├── requirements-dev.txt
 ├── .gitignore
-├── README.md
-└── requirements.txt
+└── README.md
 ```
 
 A pasta `Downloads/` e suas subpastas sao criadas automaticamente ao realizar o primeiro download.

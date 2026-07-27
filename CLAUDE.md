@@ -33,7 +33,7 @@ camadas (ver abaixo). Leia a camada relevante antes de mudar.
 ### Estrutura
 
 ```
-youtube-downloader-tkinter/
+media-downloader/
 ├── requirements.txt        # dependências para rodar o app
 ├── requirements-dev.txt    # + pytest (desenvolvimento)
 ├── pytest.ini              # pythonpath=src, testpaths=tests
