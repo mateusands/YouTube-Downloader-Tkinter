@@ -65,7 +65,9 @@ class ReportingLogger:
         self._capture(msg)
 
     def _capture(self, msg: str) -> None:
-        cleaned = msg.strip().removeprefix("ERROR: ").strip()
+        # Prefixo sem o espaço: o .strip() anterior já removeu o espaço de
+        # "ERROR: " quando a mensagem vinha vazia, e "ERROR:" virava um item.
+        cleaned = msg.strip().removeprefix("ERROR:").strip()
         if cleaned and cleaned not in self._summary.failed_items:
             self._summary.failed_items.append(cleaned)
             self._q.put({"type": "status", "message": "Um item falhou — continuando com os demais..."})
