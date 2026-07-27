@@ -23,6 +23,7 @@ camadas (ver abaixo). Leia a camada relevante antes de mudar.
 
 - **Python 3.10+** (o ambiente local está em 3.14)
 - **yt-dlp** — download e extração de metadados
+- **mutagen** — leitura e escrita de tags ID3 e capa em MP3
 - **CustomTkinter** — widgets dark mode sobre Tkinter
 - **FFmpeg** (binário do sistema) — obrigatório para MP3 e para juntar vídeo+áudio em MP4
 - **pytest** — suíte da lógica pura (backend), sem abrir janela
@@ -40,6 +41,7 @@ youtube-downloader-tkinter/
 └── tests/
     ├── test_url.py             # validação e classificação de URL
     └── test_download_manager.py # interpretação do resultado do yt-dlp + relato de falhas
+    └── test_music_metadata.py  # sugestão, catálogo e importação de metadata escolhida
 ```
 
 Os downloads vão para `Downloads/` na raiz do repo, em subpastas:
@@ -68,6 +70,10 @@ exclusivamente por uma `queue.Queue`, publicando eventos com `_emit(tipo, **payl
 - `_build_opts(...)` — opções do yt-dlp (formato, template de saída, hooks)
 - `_make_progress_hook(...)` — traduz o progresso do yt-dlp em evento na fila
 - `MusicMetadataService` — pesquisa candidatos no MusicBrainz e incorpora no MP3 apenas o candidato selecionado;
+  busca a capa no Cover Art Archive, tentando as releases da gravação em ordem de procedência.
+  `read_embedded` lê de volta o que já está gravado no arquivo — é a fonte da prévia mostrada na UI.
+- `metadata_review_reasons(info)` — diz o que o yt-dlp realmente gravou (artista da origem, artista
+  provisório vindo do canal, ou ausente); `metadata_review_detail` transforma isso na frase da UI.
 - `ReportingLogger` — captura warning/error do yt-dlp e acumula em `summary.failed_items`; ao concluir,
   `_reconcile_failure_reports` remove diagnósticos técnicos quando todos os itens previstos baixaram.
 
@@ -92,6 +98,8 @@ O download roda em `threading.Thread(target=self._manager.download, daemon=True)
 - **Um download por vez.** `start_download` já bloqueia se `self._thread.is_alive()`. Mantenha o guard.
 - **Metadata pendente não é falha.** `metadata_pending_items` precisa continuar separado de `failed_items`,
   sobretudo no resumo de playlists.
+- **Inferência nunca é importação.** `suggest_music_search` pode interpretar o título para formular a busca,
+  mas somente `MusicMetadataCandidate` confirmado pela pessoa pode ser gravado no arquivo.
 - **Não chame de ausente o que está gravado.** O `FFmpegMetadata` do yt-dlp cai para o nome do canal quando
   a origem não publica `artist` — o MP3 sai com artista provisório (`AudioslaveVEVO`), não sem artista.
   A revisão nomeia o canal; dizer "faltam: artista" era falso e foi o que originou `metadata_review_reasons`.
@@ -177,6 +185,11 @@ Conventional Commits: `feat: adiciona escolha de qualidade`, `fix: trata playlis
 6. **`BASE_DOWNLOADS_DIR` é relativo ao arquivo** (`Path(__file__).resolve().parent.parent / "Downloads"`),
    não ao diretório de trabalho. Mover `app.py` de lugar muda onde os downloads caem.
 
+7. **A busca do MusicBrainz devolve bootleg antes do álbum.** Para "Like a Stone" as primeiras dezenas de
+   resultados são gravações de show — e bootleg quase nunca tem capa no Cover Art Archive, então a prévia
+   ficava sempre vazia. Por isso a consulta pede `CATALOG_SEARCH_LIMIT` (25) e exibe as
+   `CATALOG_RESULTS_SHOWN` (5) melhores por `_release_quality`. Não reduza o limite da consulta ao número
+   exibido.
 ---
 
 ## Regras gerais

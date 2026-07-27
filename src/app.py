@@ -6,14 +6,19 @@ import sys
 import threading
 import tkinter as tk
 import webbrowser
+import json
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from tkinter import messagebox
-from typing import Any
-from urllib.parse import parse_qs, urlparse
+from typing import Any, Callable
+from urllib.parse import parse_qs, urlencode, urlparse
+from urllib.request import Request, urlopen
 
 import customtkinter as ctk
 import yt_dlp
+from mutagen import MutagenError
+from mutagen.id3 import APIC, ID3, ID3NoHeaderError, TALB, TDRC, TIT2, TPE1
 
 
 APP_TITLE = "Media Downloader"
@@ -22,6 +27,12 @@ ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 APP_ICON_PATH = ASSETS_DIR / "media-downloader-icon.png"
 APP_ICON_ICO_PATH = ASSETS_DIR / "media-downloader-icon.ico"
 SUPPORTED_SITES_URL = "https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md"
+MUSICBRAINZ_API_URL = "https://musicbrainz.org/ws/2/recording"
+COVER_ART_ARCHIVE_URL = "https://coverartarchive.org/release/{release_id}/front-250"
+MUSICBRAINZ_USER_AGENT = "MediaDownloader/1.0 (metadata lookup)"
+CATALOG_SEARCH_LIMIT = 25
+CATALOG_RESULTS_SHOWN = 5
+COVER_SOURCE_ATTEMPTS = 3
 SUPPORTED_PLATFORM_NAMES = (
     "YouTube", "Vimeo", "TikTok", "Instagram", "SoundCloud", "Dailymotion",
 )
@@ -68,9 +79,74 @@ class MetadataPendingItem:
 
 
 @dataclass(frozen=True)
+class EmbeddedMetadata:
+    """O que já está gravado no MP3 — lido do arquivo, não inferido."""
+    artist: str | None = None
+    title: str | None = None
+    album: str | None = None
+    cover: bytes | None = None
+
+
+@dataclass(frozen=True)
 class MusicSearchSuggestion:
     title: str
     artist: str | None = None
+
+
+_STATUS_QUALITY = {"official": 3, "promotion": 1, "pseudo-release": 1}
+_PRIMARY_TYPE_QUALITY = {"album": 3, "ep": 2, "single": 2}
+_SECONDARY_TYPE_PENALTY = {"live", "compilation", "remix", "demo", "dj-mix", "interview"}
+
+
+def _release_quality(release: dict[str, Any]) -> tuple[int, str]:
+    """Procedência da release: oficial e de estúdio primeiro, depois a mais antiga.
+
+    A busca do MusicBrainz devolve gravações de show na frente do álbum, e
+    bootleg raramente tem capa no Cover Art Archive — a prévia ficava vazia.
+    """
+    group = release.get("release-group") or {}
+    secondary = {kind.lower() for kind in group.get("secondary-types") or []}
+    quality = (
+        _STATUS_QUALITY.get((release.get("status") or "").lower(), 0)
+        + _PRIMARY_TYPE_QUALITY.get((group.get("primary-type") or "").lower(), 0)
+        - (3 if secondary & _SECONDARY_TYPE_PENALTY else 0)
+    )
+    return quality, release.get("date") or "9999"
+
+
+@dataclass(frozen=True)
+class MusicMetadataCandidate:
+    recording_id: str
+    title: str
+    artist: str
+    album: str | None
+    year: str | None
+    release_id: str | None
+    release_ids: tuple[str, ...] = ()
+    quality: int = 0
+
+    @classmethod
+    def from_musicbrainz(cls, recording: dict[str, Any]) -> "MusicMetadataCandidate":
+        artist = "".join(
+            f"{credit.get('name', '')}{credit.get('joinphrase', '')}"
+            for credit in recording.get("artist-credit", [])
+        ) or "Artista desconhecido"
+        releases = sorted(
+            recording.get("releases") or [],
+            key=lambda item: (-_release_quality(item)[0], _release_quality(item)[1]),
+        )
+        release = releases[0] if releases else {}
+        date = release.get("date") or ""
+        return cls(
+            recording_id=recording["id"],
+            title=recording.get("title") or "Faixa sem titulo",
+            artist=artist,
+            album=release.get("title"),
+            year=date[:4] or None,
+            release_id=release.get("id"),
+            release_ids=tuple(item["id"] for item in releases if item.get("id")),
+            quality=_release_quality(release)[0] if release else 0,
+        )
 
 
 _PROMOTIONAL_SUFFIX = re.compile(
@@ -118,6 +194,118 @@ def metadata_review_detail(pending_item: MetadataPendingItem) -> str:
     return detail[:1].upper() + detail[1:]
 
 
+class MusicMetadataService:
+    """Cliente mínimo do catálogo; não conhece arquivos nem widgets."""
+
+    def __init__(
+        self,
+        fetch_json: Callable[[str], dict[str, Any]] | None = None,
+        fetch_cover: Callable[[str], tuple[bytes, str]] | None = None,
+    ):
+        self._fetch_json = fetch_json or self._request_json
+        self._fetch_cover = fetch_cover or self._request_cover
+        self._last_request_at = 0.0
+
+    def search(self, suggestion: MusicSearchSuggestion) -> list[MusicMetadataCandidate]:
+        terms = [f'recording:"{suggestion.title}"']
+        if suggestion.artist:
+            terms.append(f'artist:"{suggestion.artist}"')
+        # Consulta mais do que exibe: o álbum oficial costuma vir depois de
+        # dezenas de gravações de show com a mesma pontuação de busca.
+        query = urlencode({
+            "query": " AND ".join(terms), "fmt": "json", "limit": CATALOG_SEARCH_LIMIT,
+        })
+        payload = self._fetch_json(f"{MUSICBRAINZ_API_URL}?{query}")
+        candidates = [
+            MusicMetadataCandidate.from_musicbrainz(recording)
+            for recording in payload.get("recordings", [])
+        ]
+        candidates.sort(key=lambda candidate: -candidate.quality)
+        return candidates[:CATALOG_RESULTS_SHOWN]
+
+    def get_cover_preview(
+        self, candidate: MusicMetadataCandidate,
+    ) -> tuple[bytes, str] | None:
+        for release_id in self._cover_sources(candidate):
+            try:
+                return self._fetch_cover(release_id)
+            except Exception:
+                continue
+        return None
+
+    @staticmethod
+    def _cover_sources(candidate: MusicMetadataCandidate) -> tuple[str, ...]:
+        """A melhor release nem sempre tem capa; as demais da gravação servem."""
+        sources = candidate.release_ids or (
+            (candidate.release_id,) if candidate.release_id else ()
+        )
+        return sources[:COVER_SOURCE_ATTEMPTS]
+
+    def _request_json(self, url: str) -> dict[str, Any]:
+        wait = 1.0 - (time.monotonic() - self._last_request_at)
+        if wait > 0:
+            time.sleep(wait)
+        request = Request(url, headers={"User-Agent": MUSICBRAINZ_USER_AGENT, "Accept": "application/json"})
+        with urlopen(request, timeout=10) as response:
+            payload = json.load(response)
+        self._last_request_at = time.monotonic()
+        return payload
+
+    def read_embedded(self, file_path: Path) -> EmbeddedMetadata:
+        """Lê as tags já gravadas — a prévia mostra o arquivo, não uma suposição."""
+        try:
+            tags = ID3(file_path)
+        except (ID3NoHeaderError, MutagenError):
+            return EmbeddedMetadata()
+        covers = tags.getall("APIC")
+        return EmbeddedMetadata(
+            artist=self._first_text(tags, "TPE1"),
+            title=self._first_text(tags, "TIT2"),
+            album=self._first_text(tags, "TALB"),
+            cover=covers[0].data if covers else None,
+        )
+
+    @staticmethod
+    def _first_text(tags: ID3, frame_id: str) -> str | None:
+        frames = tags.getall(frame_id)
+        if not frames or not frames[0].text:
+            return None
+        return str(frames[0].text[0]) or None
+
+    def apply_to_mp3(self, file_path: Path, candidate: MusicMetadataCandidate) -> bool:
+        try:
+            tags = ID3(file_path)
+        except ID3NoHeaderError:
+            tags = ID3()
+
+        for frame_id in ("TIT2", "TPE1", "TALB", "TDRC", "APIC"):
+            tags.delall(frame_id)
+        tags.add(TIT2(encoding=3, text=candidate.title))
+        tags.add(TPE1(encoding=3, text=candidate.artist))
+        if candidate.album:
+            tags.add(TALB(encoding=3, text=candidate.album))
+        if candidate.year:
+            tags.add(TDRC(encoding=3, text=candidate.year))
+
+        cover_embedded = False
+        cover = self.get_cover_preview(candidate)
+        if cover:
+            data, mime = cover
+            tags.add(APIC(encoding=3, mime=mime, type=3, desc="Capa", data=data))
+            cover_embedded = True
+        tags.save(file_path)
+        return cover_embedded
+
+    @staticmethod
+    def _request_cover(release_id: str) -> tuple[bytes, str]:
+        request = Request(
+            COVER_ART_ARCHIVE_URL.format(release_id=release_id),
+            headers={"User-Agent": MUSICBRAINZ_USER_AGENT},
+        )
+        with urlopen(request, timeout=10) as response:
+            return response.read(), response.headers.get_content_type()
+
+
 class ReportingLogger:
     def __init__(self, event_queue: queue.Queue, summary: DownloadSummary):
         self._q = event_queue
@@ -142,8 +330,59 @@ class ReportingLogger:
 
 
 class DownloadManager:
-    def __init__(self, event_queue: queue.Queue):
+    def __init__(
+        self,
+        event_queue: queue.Queue,
+        metadata_service: MusicMetadataService | None = None,
+    ):
         self._q = event_queue
+        self._metadata_service = metadata_service or MusicMetadataService()
+
+    def search_metadata(self, pending_item: MetadataPendingItem) -> None:
+        try:
+            suggestion = suggest_music_search(pending_item.title)
+            candidates = self._metadata_service.search(suggestion)
+            self._emit(
+                "metadata_results", pending_item=pending_item, candidates=candidates,
+            )
+        except Exception as exc:
+            self._emit("metadata_search_error", pending_item=pending_item, message=str(exc))
+
+    def apply_metadata(
+        self, pending_item: MetadataPendingItem, candidate: MusicMetadataCandidate,
+    ) -> None:
+        try:
+            cover_embedded = self._metadata_service.apply_to_mp3(
+                Path(pending_item.file_path), candidate,
+            )
+            self._emit(
+                "metadata_applied",
+                pending_item=pending_item,
+                candidate=candidate,
+                cover_embedded=cover_embedded,
+            )
+        except Exception as exc:
+            self._emit("metadata_import_error", pending_item=pending_item, message=str(exc))
+
+    def load_embedded_metadata(self, pending_item: MetadataPendingItem) -> None:
+        try:
+            embedded = self._metadata_service.read_embedded(Path(pending_item.file_path))
+            self._emit("metadata_embedded", pending_item=pending_item, embedded=embedded)
+        except Exception:
+            self._emit("metadata_embedded_unavailable", pending_item=pending_item)
+
+    def load_metadata_cover_preview(self, candidate: MusicMetadataCandidate) -> None:
+        try:
+            preview = self._metadata_service.get_cover_preview(candidate)
+            if preview is None:
+                self._emit("metadata_cover_unavailable", candidate=candidate)
+                return
+            data, mime = preview
+            self._emit(
+                "metadata_cover_preview", candidate=candidate, data=data, mime=mime,
+            )
+        except Exception:
+            self._emit("metadata_cover_unavailable", candidate=candidate)
 
     def download(self, url: str, file_format: str, include_metadata: bool = False) -> None:
         summary = DownloadSummary()
