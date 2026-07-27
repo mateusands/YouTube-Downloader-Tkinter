@@ -16,6 +16,9 @@ POR QUE EXISTE
   também é reavaliado aqui: a URL pode parecer playlist e o resultado vir único.
   Além disso, o yt-dlp pode registrar diagnóstico técnico como erro e ainda
   concluir o download; sem reconciliação, o resumo mostra uma falha falsa.
+  A opção de metadata de MP3 também pode não encontrar artista ou capa em todos
+  os itens de uma playlist. Isso é pendência de enriquecimento, nunca falha de
+  download.
 
 REGRA DE NEGÓCIO
   - Entrada `None` numa playlist é buraco, não item.
@@ -23,9 +26,12 @@ REGRA DE NEGÓCIO
   - Falha repetida não é listada duas vezes no resumo.
   - Se todos os itens previstos foram baixados, diagnósticos do extrator não são
     exibidos como falhas ao usuário.
+  - Metadata ausente em MP3 concluído vai para `metadata_pending_items`, separada
+    de `failed_items`.
 """
 
 import queue
+from pathlib import Path
 
 from app import DownloadManager, DownloadSummary, ReportingLogger
 
@@ -145,3 +151,81 @@ class TestResumoDeFalhas:
         DownloadManager._reconcile_failure_reports(resumo)
 
         assert resumo.failed_items == ["Private video"]
+
+
+class TestMetadataDeMp3:
+    def _opts(self, incluir_metadata: bool):
+        manager = DownloadManager(queue.Queue())
+        return manager._build_opts(
+            Path("/tmp/destino"), "mp3", False, DownloadSummary(), incluir_metadata,
+        )
+
+    def test_deve_manter_o_mp3_atual_quando_a_opcao_de_metadata_esta_desligada(self):
+        opts = self._opts(incluir_metadata=False)
+
+        assert "writethumbnail" not in opts
+        assert [item["key"] for item in opts["postprocessors"]] == ["FFmpegExtractAudio"]
+
+    def test_deve_pedir_capa_e_metadados_da_origem_quando_a_opcao_esta_ligada(self):
+        opts = self._opts(incluir_metadata=True)
+
+        assert opts["writethumbnail"] is True
+        assert [item["key"] for item in opts["postprocessors"]] == [
+            "FFmpegExtractAudio", "FFmpegMetadata", "EmbedThumbnail",
+        ]
+
+    def test_deve_listar_metadata_a_revisar_sem_marcar_o_item_como_falha(self):
+        resumo = DownloadSummary(total_items=1)
+        manager = DownloadManager(queue.Queue())
+        hook = manager._make_progress_hook(resumo, include_metadata=True)
+
+        hook({
+            "status": "finished",
+            "filename": "/tmp/ABBA - Dancing Queen.webm",
+            "info_dict": {"id": "abba-1", "title": "ABBA - Dancing Queen"},
+        })
+
+        assert resumo.downloaded_count == 1
+        assert resumo.failed_items == []
+        assert len(resumo.metadata_pending_items) == 1
+        pendencia = resumo.metadata_pending_items[0]
+        assert pendencia.title == "ABBA - Dancing Queen"
+        assert pendencia.review_reasons == ("artista ausente", "capa ausente")
+
+    def test_deve_nomear_o_canal_que_virou_artista_em_vez_de_dizer_que_falta(self):
+        resumo = DownloadSummary(total_items=1)
+        manager = DownloadManager(queue.Queue())
+        hook = manager._make_progress_hook(resumo, include_metadata=True)
+
+        hook({
+            "status": "finished",
+            "filename": "/tmp/Audioslave - Like a Stone.webm",
+            "info_dict": {
+                "id": "audioslave-1",
+                "title": "Audioslave - Like a Stone (Official Video)",
+                "uploader": "AudioslaveVEVO",
+                "thumbnail": "https://exemplo.com/capa.jpg",
+            },
+        })
+
+        assert resumo.metadata_pending_items[0].review_reasons == (
+            "artista provisorio: canal AudioslaveVEVO",
+        )
+
+    def test_nao_deve_listar_pendencia_quando_artista_e_capa_estao_disponiveis(self):
+        resumo = DownloadSummary(total_items=1)
+        manager = DownloadManager(queue.Queue())
+        hook = manager._make_progress_hook(resumo, include_metadata=True)
+
+        hook({
+            "status": "finished",
+            "filename": "/tmp/Dancing Queen.webm",
+            "info_dict": {
+                "id": "abba-1",
+                "title": "Dancing Queen",
+                "artist": "ABBA",
+                "thumbnail": "https://exemplo.com/capa.jpg",
+            },
+        })
+
+        assert resumo.metadata_pending_items == []

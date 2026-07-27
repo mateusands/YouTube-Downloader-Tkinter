@@ -6,6 +6,7 @@ Aplicacao desktop com interface grafica (CustomTkinter) para download de video e
 
 - Download de videos em MP4 (melhor qualidade disponivel)
 - Extracao de audio em MP3 (192 kbps)
+- Opcao de adicionar ao MP3 a capa e os dados disponiveis na plataforma
 - Aceita links HTTP/HTTPS e delega a compatibilidade de cada plataforma ao yt-dlp
 - Deteccao automatica de playlists do YouTube
 - Barra de progresso em tempo real

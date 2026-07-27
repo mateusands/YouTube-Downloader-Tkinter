@@ -56,15 +56,18 @@ Os downloads vão para `Downloads/` na raiz do repo, em subpastas:
 O arquivo é único, mas as camadas são de verdade e **não devem ser misturadas**:
 
 ### 1. Dados
-- `DownloadSummary` (dataclass) — contadores, itens que falharam, pasta de destino, modo playlist.
+- `DownloadSummary` (dataclass) — contadores, itens que falharam, pendências de metadata, pasta de destino e modo playlist.
+- `MetadataPendingItem` e `MusicMetadataCandidate` — dados imutáveis que atravessam a fila; nenhum campo
+  de tag é inferido e gravado sem confirmação.
 
 ### 2. Backend — `DownloadManager`
 **Não conhece a UI.** Não importa widget, não chama `messagebox`, não toca em `root`. Comunica-se
 exclusivamente por uma `queue.Queue`, publicando eventos com `_emit(tipo, **payload)`.
 
-- `download(url, file_format)` — orquestra: detecta playlist → extrai info → monta opções → baixa
+- `download(url, file_format, include_metadata)` — orquestra: detecta playlist → extrai info → monta opções → baixa
 - `_build_opts(...)` — opções do yt-dlp (formato, template de saída, hooks)
 - `_make_progress_hook(...)` — traduz o progresso do yt-dlp em evento na fila
+- `MusicMetadataService` — pesquisa candidatos no MusicBrainz e incorpora no MP3 apenas o candidato selecionado;
 - `ReportingLogger` — captura warning/error do yt-dlp e acumula em `summary.failed_items`; ao concluir,
   `_reconcile_failure_reports` remove diagnósticos técnicos quando todos os itens previstos baixaram.
 
@@ -87,6 +90,11 @@ O download roda em `threading.Thread(target=self._manager.download, daemon=True)
   isolada — é a melhor característica do projeto, não a quebre por conveniência.
 - **Comunicação thread→UI só pela `queue`.** Evento novo = novo `type` tratado em `_handle`.
 - **Um download por vez.** `start_download` já bloqueia se `self._thread.is_alive()`. Mantenha o guard.
+- **Metadata pendente não é falha.** `metadata_pending_items` precisa continuar separado de `failed_items`,
+  sobretudo no resumo de playlists.
+- **Não chame de ausente o que está gravado.** O `FFmpegMetadata` do yt-dlp cai para o nome do canal quando
+  a origem não publica `artist` — o MP3 sai com artista provisório (`AudioslaveVEVO`), não sem artista.
+  A revisão nomeia o canal; dizer "faltam: artista" era falso e foi o que originou `metadata_review_reasons`.
 - **`ignoreerrors: True`** faz o yt-dlp continuar a playlist quando um item falha — por isso existe
   `failed_items` no resumo. Não "conserte" isso para abortar tudo no primeiro erro.
 - **Não logue a URL completa** em nada persistente; pode conter parâmetros de sessão.

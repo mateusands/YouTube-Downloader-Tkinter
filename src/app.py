@@ -1,5 +1,6 @@
 import os
 import queue
+import re
 import subprocess
 import sys
 import threading
@@ -53,9 +54,68 @@ FONT_FAMILY   = "Segoe UI"
 class DownloadSummary:
     downloaded_count: int = 0
     failed_items: list[str] = field(default_factory=list)
+    metadata_pending_items: list["MetadataPendingItem"] = field(default_factory=list)
     total_items: int = 0
     target_dir: str = ""
     playlist_mode: bool = False
+
+
+@dataclass(frozen=True)
+class MetadataPendingItem:
+    title: str
+    file_path: str
+    review_reasons: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class MusicSearchSuggestion:
+    title: str
+    artist: str | None = None
+
+
+_PROMOTIONAL_SUFFIX = re.compile(
+    r"\s*[\[(](?:official\s+(?:music\s+)?video|official\s+audio|lyrics?|hd|4k)[\])]\s*$",
+    flags=re.IGNORECASE,
+)
+
+
+def suggest_music_search(source_title: str) -> MusicSearchSuggestion:
+    """Cria uma consulta de catálogo sem transformar inferência em metadata."""
+    cleaned = _PROMOTIONAL_SUFFIX.sub("", source_title).strip()
+    if " - " not in cleaned:
+        return MusicSearchSuggestion(title=cleaned)
+    artist, title = (part.strip() for part in cleaned.split(" - ", 1))
+    if artist and title:
+        return MusicSearchSuggestion(title=title, artist=artist)
+    return MusicSearchSuggestion(title=cleaned)
+
+
+def metadata_review_reasons(info: dict[str, Any]) -> tuple[str, ...]:
+    """Descreve o que o yt-dlp realmente gravou, sem chamar de ausente o que existe.
+
+    O FFmpegMetadata usa artist/artists/creator/creators e, faltando todos,
+    cai para o nome do canal. Vídeo comum do YouTube nunca traz `artist`, então
+    o MP3 sai com o canal como artista — provisório, não ausente.
+    """
+    reasons = []
+    if not any(info.get(key) for key in ("artist", "artists", "creator", "creators")):
+        channel = info.get("uploader") or info.get("uploader_id")
+        reasons.append(
+            f"artista provisorio: canal {channel}" if channel else "artista ausente")
+    if not (info.get("thumbnail") or info.get("thumbnails")):
+        reasons.append("capa ausente")
+    return tuple(reasons)
+
+
+def metadata_review_detail(pending_item: MetadataPendingItem) -> str:
+    """Explica a revisão sem confundir sugestão de busca com tag ausente."""
+    suggestion = suggest_music_search(pending_item.title)
+    parts = list(pending_item.review_reasons)
+    if suggestion.artist:
+        parts.append(f"titulo sugere {suggestion.artist} — {suggestion.title}")
+    parts.append("confirme um resultado no catalogo")
+    detail = " · ".join(parts)
+    return detail[:1].upper() + detail[1:]
 
 
 class ReportingLogger:
@@ -85,7 +145,7 @@ class DownloadManager:
     def __init__(self, event_queue: queue.Queue):
         self._q = event_queue
 
-    def download(self, url: str, file_format: str) -> None:
+    def download(self, url: str, file_format: str, include_metadata: bool = False) -> None:
         summary = DownloadSummary()
         try:
             playlist_mode = self._url_is_playlist(url)
@@ -108,7 +168,9 @@ class DownloadManager:
                 target_dir=str(target_dir),
             )
 
-            opts = self._build_opts(target_dir, file_format, playlist_mode, summary)
+            opts = self._build_opts(
+                target_dir, file_format, playlist_mode, summary, include_metadata,
+            )
             with yt_dlp.YoutubeDL(opts) as ydl:
                 ydl.download([url])
 
@@ -147,6 +209,7 @@ class DownloadManager:
         file_format: str,
         playlist_mode: bool,
         summary: DownloadSummary,
+        include_metadata: bool = False,
     ) -> dict[str, Any]:
         if playlist_mode:
             outtmpl = str(target_dir / "%(playlist_title,playlist|Playlist)s" / "%(title)s.%(ext)s")
@@ -157,7 +220,7 @@ class DownloadManager:
             "outtmpl": outtmpl,
             "ignoreerrors": True,
             "noplaylist": not playlist_mode,
-            "progress_hooks": [self._make_progress_hook(summary)],
+            "progress_hooks": [self._make_progress_hook(summary, include_metadata)],
             "quiet": True,
             "no_warnings": True,
             "concurrent_fragment_downloads": 1,
@@ -166,14 +229,22 @@ class DownloadManager:
         }
 
         if file_format == "mp3":
+            postprocessors = [{
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": "192",
+            }]
+            if include_metadata:
+                postprocessors += [
+                    {"key": "FFmpegMetadata", "add_metadata": True},
+                    {"key": "EmbedThumbnail"},
+                ]
             opts.update({
                 "format": "bestaudio/best",
-                "postprocessors": [{
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": "mp3",
-                    "preferredquality": "192",
-                }],
+                "postprocessors": postprocessors,
             })
+            if include_metadata:
+                opts["writethumbnail"] = True
         else:
             opts.update({
                 "format": "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b",
@@ -182,8 +253,9 @@ class DownloadManager:
 
         return opts
 
-    def _make_progress_hook(self, summary: DownloadSummary):
+    def _make_progress_hook(self, summary: DownloadSummary, include_metadata: bool = False):
         seen: set[str] = set()
+        metadata_seen: set[str] = set()
 
         def hook(data: dict[str, Any]) -> None:
             status = data.get("status")
@@ -210,6 +282,16 @@ class DownloadManager:
                 if uid not in seen:
                     seen.add(uid)
                     summary.downloaded_count += 1
+                if include_metadata and uid not in metadata_seen:
+                    metadata_seen.add(uid)
+                    review_reasons = metadata_review_reasons(info_dict)
+                    if review_reasons:
+                        filename = data.get("filename") or info_dict.get("filepath") or ""
+                        summary.metadata_pending_items.append(MetadataPendingItem(
+                            title=title,
+                            file_path=str(Path(filename).with_suffix(".mp3")) if filename else "",
+                            review_reasons=review_reasons,
+                        ))
                 overall = (summary.downloaded_count / summary.total_items * 100
                            if summary.total_items else 100.0)
                 self._emit("progress", progress=max(0.0, min(overall, 100.0)),
@@ -515,6 +597,25 @@ class MediaDownloaderApp:
             value="mp4", variable=self.format_var)
         self._mp4_card.grid(row=0, column=1, sticky="ew", padx=(8, 0))
 
+        self.include_metadata_var = ctk.BooleanVar(value=False)
+        self.metadata_checkbox = ctk.CTkCheckBox(
+            parent, text="Adicionar capa e metadados",
+            variable=self.include_metadata_var,
+            onvalue=True, offvalue=False,
+            font=(FONT_FAMILY, 12, "bold"), text_color=CLR_TEXT,
+            fg_color=CLR_ACCENT, hover_color=CLR_ACCENT_DARK,
+            border_color=CLR_BORDER, checkmark_color=CLR_TEXT,
+        )
+        self.metadata_checkbox.pack(anchor="w", pady=(14, 0))
+        ctk.CTkLabel(
+            parent,
+            text=("Usa titulo, artista e capa disponiveis na plataforma. "
+                  "Títulos no formato Artista - Musica podem ajudar depois."),
+            font=(FONT_FAMILY, 10), text_color=CLR_MUTED,
+        ).pack(anchor="w", pady=(3, 0))
+        self.format_var.trace_add("write", lambda *_: self._update_metadata_option())
+        self._update_metadata_option()
+
     # ── Button Section ────────────────────────────────────────────────────────
 
     def _build_button_section(self, parent) -> None:
@@ -614,7 +715,7 @@ class MediaDownloaderApp:
 
         self._thread = threading.Thread(
             target=self._manager.download,
-            args=(url, self.format_var.get()),
+            args=(url, self.format_var.get(), self.include_metadata_var.get()),
             daemon=True,
         )
         self._thread.start()
@@ -690,17 +791,26 @@ class MediaDownloaderApp:
 
     def _show_summary(self, s: DownloadSummary) -> None:
         failed = len(s.failed_items)
+        pending_metadata = len(s.metadata_pending_items)
         self.status_var.set(
             f"Concluido — {s.downloaded_count} baixado(s)"
-            + (f", {failed} com falha" if failed else ""))
+            + (f", {failed} com falha" if failed else "")
+            + (f", {pending_metadata} com metadata a confirmar" if pending_metadata else ""))
         self.info_var.set(f"Destino: {s.target_dir}")
 
         lines = [
             f"OK  {s.downloaded_count} item(s) baixado(s) com sucesso",
             f"--  {failed} item(s) com falha",
+            f"--  {pending_metadata} MP3 com metadata a confirmar",
         ]
         if failed:
             lines += ["", "Itens com falha:"] + [f"  - {i}" for i in s.failed_items]
+        if pending_metadata:
+            lines += ["", "MP3 com metadata a confirmar:"]
+            lines += [
+                f"  - {item.title} ({metadata_review_detail(item)})"
+                for item in s.metadata_pending_items
+            ]
 
         messagebox.showinfo("Resumo do download", "\n".join(lines))
 
@@ -714,6 +824,17 @@ class MediaDownloaderApp:
         self.url_entry.configure(state=state)
         self.paste_btn.configure(state=state)
         self.folder_btn.configure(state=state)
+        if busy:
+            self.metadata_checkbox.configure(state="disabled")
+        else:
+            self._update_metadata_option()
+
+    def _update_metadata_option(self) -> None:
+        if self.format_var.get() == "mp3":
+            self.metadata_checkbox.configure(state="normal", text_color=CLR_TEXT)
+        else:
+            self.include_metadata_var.set(False)
+            self.metadata_checkbox.configure(state="disabled", text_color=CLR_MUTED)
 
     @staticmethod
     def _valid_url(url: str) -> bool:
