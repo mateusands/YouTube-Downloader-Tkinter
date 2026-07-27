@@ -4,6 +4,7 @@ import subprocess
 import sys
 import threading
 import tkinter as tk
+import webbrowser
 from dataclasses import dataclass, field
 from pathlib import Path
 from tkinter import messagebox
@@ -14,8 +15,15 @@ import customtkinter as ctk
 import yt_dlp
 
 
-APP_TITLE = "YouTube Downloader"
+APP_TITLE = "Media Downloader"
 BASE_DOWNLOADS_DIR = Path(__file__).resolve().parent.parent / "Downloads"
+ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
+APP_ICON_PATH = ASSETS_DIR / "media-downloader-icon.png"
+APP_ICON_ICO_PATH = ASSETS_DIR / "media-downloader-icon.ico"
+SUPPORTED_SITES_URL = "https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md"
+SUPPORTED_PLATFORM_NAMES = (
+    "YouTube", "Vimeo", "TikTok", "Instagram", "SoundCloud", "Dailymotion",
+)
 DOWNLOAD_FOLDERS = {
     ("mp3", False): BASE_DOWNLOADS_DIR / "audios_unicos",
     ("mp4", False): BASE_DOWNLOADS_DIR / "videos_unicos",
@@ -31,9 +39,9 @@ BG_HOVER      = "#2a2a2a"
 CLR_TEXT      = "#ffffff"
 CLR_MUTED     = "#888888"
 CLR_BORDER    = "#333333"
-CLR_RED       = "#FF0000"
-CLR_RED_DARK  = "#CC0000"
-CLR_RED_LIGHT = "#FF3333"
+CLR_ACCENT    = "#6d5dfc"
+CLR_ACCENT_DARK = "#5144d9"
+CLR_ACCENT_LIGHT = "#8b7cff"
 CLR_GREEN     = "#22c55e"
 CLR_ERROR     = "#ef4444"
 FONT_FAMILY   = "Segoe UI"
@@ -91,7 +99,7 @@ class DownloadManager:
             summary.playlist_mode = playlist_mode
             summary.total_items = self._count_items(info, playlist_mode)
 
-            label = "playlist" if playlist_mode else "video"
+            label = "colecao" if playlist_mode else "midia"
             self._emit("status", message=f"Preparando download ({label})...")
             self._emit(
                 "meta",
@@ -117,7 +125,7 @@ class DownloadManager:
             return False
 
     def _extract_info(self, url: str, playlist_mode: bool) -> dict[str, Any]:
-        self._emit("status", message="Analisando URL...")
+        self._emit("status", message="Analisando link...")
         opts = {
             "quiet": True,
             "skip_download": True,
@@ -246,8 +254,8 @@ class FormatCard(ctk.CTkFrame):
         self.grid_columnconfigure(1, weight=1)
 
         self._icon_label = ctk.CTkLabel(
-            self, text=icon, font=(FONT_FAMILY, 24),
-            text_color=CLR_MUTED, width=40)
+            self, text=icon, font=(FONT_FAMILY, 13, "bold"),
+            text_color=CLR_MUTED, width=48)
         self._icon_label.grid(row=0, column=0, rowspan=2, padx=(16, 8), pady=14)
 
         self._title_label = ctk.CTkLabel(
@@ -278,8 +286,8 @@ class FormatCard(ctk.CTkFrame):
             return
         self._selected = selected
         if selected:
-            self.configure(border_color=CLR_RED, fg_color="#1f1215")
-            self._icon_label.configure(text_color=CLR_RED)
+            self.configure(border_color=CLR_ACCENT, fg_color="#1d1b35")
+            self._icon_label.configure(text_color=CLR_ACCENT_LIGHT)
         else:
             self.configure(border_color=CLR_BORDER, fg_color=BG_INPUT)
             self._icon_label.configure(text_color=CLR_MUTED)
@@ -296,30 +304,40 @@ class HoverButton(ctk.CTkButton):
         self._base = base_color
         self._hover = hover_color
         self._press = press_color or hover_color
-        self.bind("<ButtonPress-1>", self._on_press)
-        self.bind("<ButtonRelease-1>", self._on_release)
+        self.bind("<ButtonPress-1>", self._apply_press_color)
+        self.bind("<ButtonRelease-1>", self._restore_base_color)
 
-    def _on_press(self, _e=None):
+    def _apply_press_color(self, _e=None):
         if str(self.cget("state")) != "disabled":
             self.configure(fg_color=self._press)
 
-    def _on_release(self, _e=None):
+    def _restore_base_color(self, _e=None):
         if str(self.cget("state")) != "disabled":
             self.configure(fg_color=self._base)
 
 
-class YouTubeDownloaderApp:
-    _W, _H = 860, 640
+class MediaDownloaderApp:
+    _W, _H = 860, 760
 
     def __init__(self, root: ctk.CTk):
         self.root = root
         self.root.title(APP_TITLE)
-        self.root.minsize(740, 580)
+        self.root.minsize(740, 700)
         self.root.configure(fg_color=BG_DARK)
+        self._app_icon = tk.PhotoImage(file=str(APP_ICON_PATH))
+        self._header_icon = self._app_icon.subsample(8, 8)
+        if sys.platform.startswith("win"):
+            self.root.iconbitmap(default=str(APP_ICON_ICO_PATH))
+        self.root.iconphoto(True, self._app_icon)
 
         self._q: queue.Queue = queue.Queue()
         self._manager = DownloadManager(self._q)
         self._thread: threading.Thread | None = None
+        self._metadata_thread: threading.Thread | None = None
+        self._metadata_cover_labels: dict[str, ctk.CTkLabel] = {}
+        self._metadata_cover_images: dict[str, ctk.CTkImage] = {}
+        self._metadata_embedded_labels: dict[str, tuple[ctk.CTkLabel, ctk.CTkLabel]] = {}
+        self._metadata_embedded_images: dict[str, ctk.CTkImage] = {}
 
         self._build_ui()
         self._center(self._W, self._H)
@@ -338,29 +356,29 @@ class YouTubeDownloaderApp:
         self._build_body()
 
     def _build_header(self) -> None:
-        header = ctk.CTkFrame(self.root, fg_color=BG_DARK, corner_radius=0, height=90)
+        header = ctk.CTkFrame(self.root, fg_color=BG_DARK, corner_radius=0, height=108)
         header.pack(fill="x")
         header.pack_propagate(False)
 
         inner = ctk.CTkFrame(header, fg_color="transparent")
-        inner.pack(fill="x", padx=32, pady=(20, 0))
+        inner.pack(fill="x", padx=32, pady=(18, 0))
 
         title_row = ctk.CTkFrame(inner, fg_color="transparent")
         title_row.pack(anchor="w")
 
-        ctk.CTkLabel(
-            title_row, text="\u25B6",
-            font=(FONT_FAMILY, 26), text_color=CLR_RED,
-        ).pack(side="left", padx=(0, 10))
+        tk.Label(
+            title_row, image=self._header_icon, bg=BG_DARK,
+            borderwidth=0, highlightthickness=0,
+        ).pack(side="left", padx=(0, 12))
 
         ctk.CTkLabel(
-            title_row, text="YouTube Downloader",
+            title_row, text=APP_TITLE,
             font=(FONT_FAMILY, 24, "bold"), text_color=CLR_TEXT,
         ).pack(side="left")
 
         ctk.CTkLabel(
             inner,
-            text="Baixe videos e musicas do YouTube. Playlists detectadas automaticamente.",
+            text="Baixe video ou audio de plataformas compativeis com o yt-dlp.",
             font=(FONT_FAMILY, 12), text_color=CLR_MUTED,
         ).pack(anchor="w", pady=(6, 0))
 
@@ -388,7 +406,7 @@ class YouTubeDownloaderApp:
 
     def _build_url_section(self, parent) -> None:
         ctk.CTkLabel(
-            parent, text="Link do YouTube",
+            parent, text="Link da midia",
             font=(FONT_FAMILY, 13, "bold"), text_color=CLR_TEXT,
         ).pack(anchor="w")
 
@@ -399,23 +417,18 @@ class YouTubeDownloaderApp:
 
         inner = ctk.CTkFrame(input_frame, fg_color="transparent")
         inner.pack(fill="x", padx=4, pady=4)
-        inner.grid_columnconfigure(1, weight=1)
-
-        ctk.CTkLabel(
-            inner, text="\U0001F517", font=(FONT_FAMILY, 14),
-            text_color=CLR_MUTED, width=32,
-        ).grid(row=0, column=0, padx=(8, 0))
+        inner.grid_columnconfigure(0, weight=1)
 
         self.url_var = ctk.StringVar()
         self.url_entry = ctk.CTkEntry(
             inner, textvariable=self.url_var,
             font=(FONT_FAMILY, 12),
-            placeholder_text="https://www.youtube.com/watch?v=...",
+            placeholder_text="https://exemplo.com/video",
             fg_color="transparent", border_width=0,
             text_color=CLR_TEXT, placeholder_text_color=CLR_MUTED,
             height=36,
         )
-        self.url_entry.grid(row=0, column=1, sticky="ew", padx=4)
+        self.url_entry.grid(row=0, column=0, sticky="ew", padx=(12, 4))
 
         self.paste_btn = HoverButton(
             inner, text="Colar", width=70, height=32,
@@ -423,16 +436,43 @@ class YouTubeDownloaderApp:
             base_color=CLR_BORDER, hover_color="#444444", press_color="#555555",
             text_color=CLR_TEXT, command=self._paste_url,
         )
-        self.paste_btn.grid(row=0, column=2, padx=(0, 4))
+        self.paste_btn.grid(row=0, column=1, padx=(0, 4))
 
-        self.url_entry.bind("<FocusIn>", lambda _: input_frame.configure(border_color=CLR_RED))
+        self.url_entry.bind("<FocusIn>", lambda _: input_frame.configure(border_color=CLR_ACCENT))
         self.url_entry.bind("<FocusOut>", lambda _: input_frame.configure(border_color=CLR_BORDER))
 
         self._url_hint = ctk.CTkLabel(
-            parent, text="Cole o link de um video ou de uma playlist",
+            parent, text="Cole um link de video, audio ou colecao.",
             font=(FONT_FAMILY, 11), text_color=CLR_MUTED,
         )
         self._url_hint.pack(anchor="w", pady=(4, 0))
+
+        self._build_supported_sites_section(parent)
+
+    def _build_supported_sites_section(self, parent) -> None:
+        ctk.CTkLabel(
+            parent, text="Plataformas populares compativeis",
+            font=(FONT_FAMILY, 11, "bold"), text_color=CLR_TEXT,
+        ).pack(anchor="w", pady=(14, 0))
+
+        sites_row = ctk.CTkFrame(parent, fg_color="transparent")
+        sites_row.pack(anchor="w", pady=(7, 0))
+        for site in SUPPORTED_PLATFORM_NAMES:
+            ctk.CTkLabel(
+                sites_row, text=site, font=(FONT_FAMILY, 10), text_color=CLR_MUTED,
+                fg_color=BG_HOVER, corner_radius=8, padx=10, pady=5,
+            ).pack(side="left", padx=(0, 6))
+
+        link = ctk.CTkLabel(
+            parent, text="Ver lista completa e atualizada do yt-dlp",
+            font=(FONT_FAMILY, 10), text_color=CLR_ACCENT_LIGHT, cursor="hand2",
+        )
+        link.pack(anchor="w", pady=(8, 0))
+        link.bind("<Button-1>", lambda _: self._open_supported_sites())
+
+    @staticmethod
+    def _open_supported_sites() -> None:
+        webbrowser.open_new_tab(SUPPORTED_SITES_URL)
 
     def _paste_url(self) -> None:
         try:
@@ -457,13 +497,13 @@ class YouTubeDownloaderApp:
         row.grid_columnconfigure(1, weight=1)
 
         self._mp3_card = FormatCard(
-            row, icon="\u266B", title="Audio MP3",
+            row, icon="MP3", title="Audio MP3",
             subtitle="192 kbps — apenas audio",
             value="mp3", variable=self.format_var)
         self._mp3_card.grid(row=0, column=0, sticky="ew", padx=(0, 8))
 
         self._mp4_card = FormatCard(
-            row, icon="\u25B6", title="Video MP4",
+            row, icon="MP4", title="Video MP4",
             subtitle="Melhor qualidade disponivel",
             value="mp4", variable=self.format_var)
         self._mp4_card.grid(row=0, column=1, sticky="ew", padx=(8, 0))
@@ -475,16 +515,16 @@ class YouTubeDownloaderApp:
         row.pack(anchor="w")
 
         self.download_btn = HoverButton(
-            row, text="\u2B07  Baixar agora",
+            row, text="Baixar midia",
             font=(FONT_FAMILY, 13, "bold"),
-            base_color=CLR_RED, hover_color=CLR_RED_DARK, press_color="#990000",
+            base_color=CLR_ACCENT, hover_color=CLR_ACCENT_DARK, press_color="#4036aa",
             text_color="#ffffff", width=200, height=44,
             command=self.start_download,
         )
         self.download_btn.pack(side="left", padx=(0, 12))
 
         self.folder_btn = HoverButton(
-            row, text="\U0001F4C2  Abrir pasta",
+            row, text="Abrir pasta",
             font=(FONT_FAMILY, 12),
             base_color="transparent", hover_color=BG_HOVER, press_color=CLR_BORDER,
             text_color=CLR_TEXT, border_width=2, border_color=CLR_BORDER,
@@ -515,7 +555,7 @@ class YouTubeDownloaderApp:
         self.progress_bar = ctk.CTkProgressBar(
             parent, variable=self.progress_var,
             height=12, corner_radius=6,
-            fg_color=CLR_BORDER, progress_color=CLR_RED,
+            fg_color=CLR_BORDER, progress_color=CLR_ACCENT,
         )
         self.progress_bar.set(0)
         self.progress_bar.pack(fill="x", pady=(10, 12))
@@ -543,7 +583,7 @@ class YouTubeDownloaderApp:
         if not self._valid_url(url):
             self._input_frame.configure(border_color=CLR_ERROR)
             self._url_hint.configure(
-                text="URL invalida — informe um link valido do YouTube",
+                text="URL invalida — informe um link HTTP ou HTTPS valido.",
                 text_color=CLR_ERROR)
             self.root.after(3000, self._reset_url_hint)
             return
@@ -574,7 +614,7 @@ class YouTubeDownloaderApp:
 
     def _reset_url_hint(self):
         self._url_hint.configure(
-            text="Cole o link de um video ou de uma playlist",
+            text="Cole um link de video, audio ou colecao.",
             text_color=CLR_MUTED)
 
     def open_downloads_folder(self) -> None:
@@ -610,7 +650,7 @@ class YouTubeDownloaderApp:
             total = event.get("total_items", 0)
             is_pl = event.get("playlist_mode", False)
             dest  = event.get("target_dir", "")
-            tipo  = "Playlist" if is_pl else "Video"
+            tipo  = "Colecao" if is_pl else "Midia"
             self.info_var.set(f"Tipo: {tipo}  |  Itens: {total}  |  Destino: {dest}")
 
         elif etype == "progress":
@@ -663,7 +703,7 @@ class YouTubeDownloaderApp:
         state = "disabled" if busy else "normal"
         self.download_btn.configure(
             state=state,
-            text="\u23F3  Baixando..." if busy else "\u2B07  Baixar agora")
+            text="Baixando..." if busy else "Baixar midia")
         self.url_entry.configure(state=state)
         self.paste_btn.configure(state=state)
         self.folder_btn.configure(state=state)
@@ -676,20 +716,7 @@ class YouTubeDownloaderApp:
             return False
         if p.scheme not in {"http", "https"}:
             return False
-        valid_hosts = {
-            "youtube.com", "www.youtube.com", "m.youtube.com",
-            "youtu.be", "www.youtu.be",
-        }
-        if p.netloc.lower() not in valid_hosts:
-            return False
-        if "youtu.be" in p.netloc.lower():
-            return bool(p.path.strip("/"))
-        q = parse_qs(p.query)
-        return (
-            ("watch" in p.path and bool(q.get("v")))
-            or bool(q.get("list"))
-            or p.path.startswith("/shorts/")
-        )
+        return bool(p.hostname)
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -698,7 +725,7 @@ def main() -> None:
     ctk.set_appearance_mode("dark")
     ctk.set_default_color_theme("dark-blue")
     root = ctk.CTk()
-    app = YouTubeDownloaderApp(root)
+    app = MediaDownloaderApp(root)
     app.url_entry.focus()
     root.mainloop()
 

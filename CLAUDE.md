@@ -1,10 +1,12 @@
-# CLAUDE.md — YouTube Downloader
+# CLAUDE.md — Media Downloader
 
 ## Propósito do projeto
 
-Aplicação desktop em Python com interface dark mode (CustomTkinter) para baixar vídeo ou áudio do YouTube,
-individualmente ou por playlist. Detecta automaticamente se o link é de playlist, organiza os downloads em
-pastas por tipo, mostra progresso em tempo real e um resumo com os itens que falharam.
+Aplicação desktop em Python com interface dark mode (CustomTkinter) para baixar vídeo ou áudio de plataformas
+compatíveis com o yt-dlp. Aceita links HTTP/HTTPS e deixa a confirmação de suporte para o yt-dlp; preserva a
+detecção explícita de playlists do YouTube para não baixar uma coleção inteira quando o usuário forneceu o link de
+um único vídeo. Organiza os downloads em pastas por tipo, mostra progresso em tempo real e um resumo com os itens
+que falharam.
 
 Projeto de portfólio.
 
@@ -12,7 +14,7 @@ Projeto de portfólio.
 
 ## Fonte da verdade
 
-**O estado real do sistema é o código.** É um arquivo — `src/app.py`, ~705 linhas — mas bem separado em
+**O estado real do sistema é o código.** É um arquivo — `src/app.py` — mas bem separado em
 camadas (ver abaixo). Leia a camada relevante antes de mudar.
 
 ---
@@ -33,7 +35,8 @@ youtube-downloader-tkinter/
 ├── requirements-dev.txt    # + pytest (desenvolvimento)
 ├── pytest.ini              # pythonpath=src, testpaths=tests
 ├── src/
-│   └── app.py              # tudo, em 3 camadas: dados · backend (DownloadManager) · UI (YouTubeDownloaderApp)
+│   └── app.py              # tudo, em 3 camadas: dados · backend (DownloadManager) · UI (MediaDownloaderApp)
+├── assets/                 # ícone SVG mestre, PNG da UI e ICO para Windows
 └── tests/
     ├── test_url.py             # validação e classificação de URL
     └── test_download_manager.py # interpretação do resultado do yt-dlp + relato de falhas
@@ -64,7 +67,7 @@ exclusivamente por uma `queue.Queue`, publicando eventos com `_emit(tipo, **payl
 - `_make_progress_hook(...)` — traduz o progresso do yt-dlp em evento na fila
 - `ReportingLogger` — captura warning/error do yt-dlp e acumula em `summary.failed_items`
 
-### 3. UI — `YouTubeDownloaderApp`
+### 3. UI — `MediaDownloaderApp`
 Consome a fila por **polling**: `self.root.after(100, self._poll)` reagenda a cada 100 ms, drenando a
 `queue` com `get_nowait()` e despachando para `_handle(event)`.
 
@@ -158,8 +161,9 @@ Conventional Commits: `feat: adiciona escolha de qualidade`, `fix: trata playlis
 4. **Template de saída com `%(title)s`** — títulos com `/`, emoji ou nome muito longo geram problema de
    nome de arquivo, variando por sistema de arquivos.
 
-5. **`_valid_url` valida só o formato da URL**, não se o vídeo existe ou é acessível. Vídeo privado,
-   removido ou com bloqueio regional só falha depois, dentro do yt-dlp.
+5. **URL aceita não é URL suportada.** `_valid_url` só exige HTTP/HTTPS com host; a confirmação de suporte,
+   disponibilidade e acesso pertence ao yt-dlp. Não liste plataformas como garantia: a tela mostra exemplos e
+   aponta para a lista oficial atualizada.
 
 6. **`BASE_DOWNLOADS_DIR` é relativo ao arquivo** (`Path(__file__).resolve().parent.parent / "Downloads"`),
    não ao diretório de trabalho. Mover `app.py` de lugar muda onde os downloads caem.

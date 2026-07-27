@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title">
+  <title>Media Downloader</title>
+  <rect x="16" y="16" width="224" height="224" rx="56" fill="#161c2e"/>
+  <rect x="28" y="28" width="200" height="200" rx="44" fill="#202a45"/>
+  <path d="M77 78c0-12 13-19 23-12l71 41c10 6 10 20 0 26l-71 41c-10 7-23 0-23-12V78Z" fill="#7dd3fc"/>
+  <path d="M128 82v65m0 0-24-24m24 24 24-24" fill="none" stroke="#6d5dfc" stroke-linecap="round" stroke-linejoin="round" stroke-width="18"/>
+  <path d="M93 183h70" fill="none" stroke="#a78bfa" stroke-linecap="round" stroke-width="14"/>
+</svg>
