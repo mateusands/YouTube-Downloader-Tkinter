@@ -262,6 +262,10 @@ class MusicMetadataService:
 
     def read_embedded(self, file_path: Path) -> EmbeddedMetadata:
         """Lê as tags já gravadas — a prévia mostra o arquivo, não uma suposição."""
+        # Arquivo que sumiu não é arquivo sem tags: devolver metadata vazia aqui
+        # faria a interface anunciar "artista gravado: nenhum" para o que não existe.
+        if not file_path.name or not file_path.is_file():
+            raise FileNotFoundError(f"MP3 nao encontrado: {file_path}")
         try:
             tags = ID3(file_path)
         except (ID3NoHeaderError, MutagenError):
@@ -673,8 +677,10 @@ class MediaDownloaderApp:
         self._metadata_thread: threading.Thread | None = None
         self._metadata_cover_labels: dict[str, ctk.CTkLabel] = {}
         self._metadata_cover_images: dict[str, ctk.CTkImage] = {}
-        self._metadata_embedded_labels: dict[str, tuple[ctk.CTkLabel, ctk.CTkLabel]] = {}
-        self._metadata_embedded_images: dict[str, ctk.CTkImage] = {}
+        self._metadata_review_rows: dict[
+            "MetadataPendingItem", tuple[ctk.CTkLabel, ctk.CTkLabel, "HoverButton"],
+        ] = {}
+        self._metadata_embedded_images: dict["MetadataPendingItem", ctk.CTkImage] = {}
 
         self._build_ui()
         self._center(self._W, self._H)
@@ -1068,7 +1074,7 @@ class MediaDownloaderApp:
             self._show_embedded_metadata(event["pending_item"], event["embedded"])
 
         elif etype == "metadata_embedded_unavailable":
-            self._show_embedded_metadata(event["pending_item"], EmbeddedMetadata())
+            self._show_embedded_unavailable(event["pending_item"])
 
         elif etype == "metadata_cover_preview":
             self._show_metadata_cover_preview(
@@ -1114,7 +1120,7 @@ class MediaDownloaderApp:
         window.minsize(720, 380)
         window.configure(fg_color=BG_DARK)
         window.transient(self.root)
-        self._metadata_embedded_labels = {}
+        self._metadata_review_rows = {}
         self._metadata_embedded_images = {}
 
         ctk.CTkLabel(
@@ -1156,16 +1162,20 @@ class MediaDownloaderApp:
                 font=(FONT_FAMILY, 10), text_color=CLR_MUTED, anchor="w",
                 wraplength=340, justify="left",
             ).grid(row=2, column=1, sticky="ew", padx=12, pady=(1, 10))
-            HoverButton(
+            search_btn = HoverButton(
                 row, text="Buscar metadata", width=145, height=32,
                 font=(FONT_FAMILY, 11, "bold"),
                 base_color=CLR_ACCENT, hover_color=CLR_ACCENT_DARK,
                 text_color=CLR_TEXT,
                 command=lambda item=pending_item: self._start_metadata_search(item),
-            ).grid(row=0, column=2, rowspan=3, padx=10, pady=10)
+            )
+            search_btn.grid(row=0, column=2, rowspan=3, padx=10, pady=10)
 
-            self._metadata_embedded_labels[pending_item.file_path] = (
-                cover_label, embedded_label,
+            # Chaveado pelo próprio item: dois pendentes podem compartilhar o
+            # caminho (o yt-dlp nem sempre informa o nome do arquivo), e aí a
+            # prévia de um sobrescrevia a linha do outro.
+            self._metadata_review_rows[pending_item] = (
+                cover_label, embedded_label, search_btn,
             )
             threading.Thread(
                 target=self._manager.load_embedded_metadata,
@@ -1175,10 +1185,10 @@ class MediaDownloaderApp:
     def _show_embedded_metadata(
         self, pending_item: MetadataPendingItem, embedded: EmbeddedMetadata,
     ) -> None:
-        labels = self._metadata_embedded_labels.get(pending_item.file_path)
-        if not labels:
+        row = self._metadata_review_rows.get(pending_item)
+        if not row:
             return
-        cover_label, embedded_label = labels
+        cover_label, embedded_label, _ = row
         if embedded_label.winfo_exists():
             gravado = [f"Artista gravado: {embedded.artist or 'nenhum'}"]
             if embedded.album:
@@ -1190,8 +1200,24 @@ class MediaDownloaderApp:
         if image is None:
             cover_label.configure(text="Sem capa\nno arquivo")
             return
-        self._metadata_embedded_images[pending_item.file_path] = image
+        self._metadata_embedded_images[pending_item] = image
         cover_label.configure(image=image, text="")
+
+    def _show_embedded_unavailable(self, pending_item: MetadataPendingItem) -> None:
+        """Sem arquivo para ler, importar so produziria erro — a acao sai de cena."""
+        row = self._metadata_review_rows.get(pending_item)
+        if not row:
+            return
+        cover_label, embedded_label, search_btn = row
+        if cover_label.winfo_exists():
+            cover_label.configure(text="Arquivo\nnao lido")
+        if embedded_label.winfo_exists():
+            embedded_label.configure(
+                text="Arquivo nao localizado — verifique se a conversao terminou.",
+                text_color=CLR_ERROR,
+            )
+        if search_btn.winfo_exists():
+            search_btn.configure(state="disabled")
 
     @staticmethod
     def _make_cover_image(data: bytes) -> ctk.CTkImage | None:

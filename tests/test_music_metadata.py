@@ -26,6 +26,9 @@ REGRA DE NEGÓCIO
     usa sintaxe Lucene: `Best of You "Live"` cru fecha a frase no meio e a busca
     devolve zero resultados sem erro nenhum — o usuário conclui que a faixa não
     existe no catálogo.
+  - Arquivo inexistente não é arquivo sem tags. `read_embedded` recusa o caminho
+    ausente (inclusive o caminho vazio) em vez de devolver metadata vazia, senão
+    a interface anuncia "artista gravado: nenhum" para um arquivo que sumiu.
   - A release exibida é a de melhor procedência (oficial, álbum de estúdio),
     não a primeira que o MusicBrainz devolver: buscar "Like a Stone" trazia
     bootlegs de show no topo, todos sem capa no Cover Art Archive, e a prévia
@@ -349,6 +352,14 @@ class TestPreviaDoQueJaEstaNoArquivo:
         embedded = MusicMetadataService().read_embedded(arquivo)
 
         assert embedded == EmbeddedMetadata()
+
+    def test_deve_recusar_arquivo_inexistente_em_vez_de_dizer_que_esta_vazio(self, tmp_path):
+        with pytest.raises(FileNotFoundError):
+            MusicMetadataService().read_embedded(tmp_path / "nao-existe.mp3")
+
+    def test_deve_recusar_pendencia_sem_caminho_de_arquivo(self):
+        with pytest.raises(FileNotFoundError):
+            MusicMetadataService().read_embedded(Path(""))
 
     def test_deve_publicar_a_previa_na_fila_sem_abrir_arquivo_pela_ui(self):
         class CatalogoComArquivo:
