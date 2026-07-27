@@ -103,6 +103,8 @@ O download roda em `threading.Thread(target=self._manager.download, daemon=True)
 - **Não chame de ausente o que está gravado.** O `FFmpegMetadata` do yt-dlp cai para o nome do canal quando
   a origem não publica `artist` — o MP3 sai com artista provisório (`AudioslaveVEVO`), não sem artista.
   A revisão nomeia o canal; dizer "faltam: artista" era falso e foi o que originou `metadata_review_reasons`.
+- **A prévia mostra o arquivo, não a suposição.** O que aparece no diálogo de revisão vem de
+  `read_embedded`, lido pelo backend numa thread e publicado na fila — a thread gráfica não abre arquivo.
 - **`ignoreerrors: True`** faz o yt-dlp continuar a playlist quando um item falha — por isso existe
   `failed_items` no resumo. Não "conserte" isso para abortar tudo no primeiro erro.
 - **Não logue a URL completa** em nada persistente; pode conter parâmetros de sessão.
@@ -190,6 +192,11 @@ Conventional Commits: `feat: adiciona escolha de qualidade`, `fix: trata playlis
    ficava sempre vazia. Por isso a consulta pede `CATALOG_SEARCH_LIMIT` (25) e exibe as
    `CATALOG_RESULTS_SHOWN` (5) melhores por `_release_quality`. Não reduza o limite da consulta ao número
    exibido.
+
+8. **`wraplength` maior que a coluna corta a frase.** O Tk não encolhe a linha para caber: o texto é
+   clipado no meio, sem reticências. O `minsize` do diálogo de revisão acompanha o `wraplength` da linha
+   de motivos — mexer em um exige mexer no outro.
+
 ---
 
 ## Regras gerais

@@ -9,6 +9,7 @@ import webbrowser
 import json
 import time
 from dataclasses import dataclass, field
+from io import BytesIO
 from pathlib import Path
 from tkinter import messagebox
 from typing import Any, Callable
@@ -19,6 +20,7 @@ import customtkinter as ctk
 import yt_dlp
 from mutagen import MutagenError
 from mutagen.id3 import APIC, ID3, ID3NoHeaderError, TALB, TDRC, TIT2, TPE1
+from PIL import Image, ImageOps
 
 
 APP_TITLE = "Media Downloader"
@@ -30,6 +32,7 @@ SUPPORTED_SITES_URL = "https://github.com/yt-dlp/yt-dlp/blob/master/supportedsit
 MUSICBRAINZ_API_URL = "https://musicbrainz.org/ws/2/recording"
 COVER_ART_ARCHIVE_URL = "https://coverartarchive.org/release/{release_id}/front-250"
 MUSICBRAINZ_USER_AGENT = "MediaDownloader/1.0 (metadata lookup)"
+COVER_PREVIEW_SIZE = 88
 CATALOG_SEARCH_LIMIT = 25
 CATALOG_RESULTS_SHOWN = 5
 COVER_SOURCE_ATTEMPTS = 3
@@ -1028,6 +1031,47 @@ class MediaDownloaderApp:
             messagebox.showerror("Erro no download",
                                  event.get("message", "Erro desconhecido."))
 
+        elif etype == "metadata_results":
+            self._show_metadata_candidates(
+                event["pending_item"], event.get("candidates", []),
+            )
+
+        elif etype == "metadata_search_error":
+            messagebox.showerror(
+                "Busca de metadata",
+                f"Nao foi possivel buscar metadata para {event['pending_item'].title}.\n\n"
+                f"{event.get('message', 'Erro desconhecido.')}",
+            )
+
+        elif etype == "metadata_applied":
+            candidate: MusicMetadataCandidate = event["candidate"]
+            cover_message = " com capa incorporada" if event.get("cover_embedded") else " sem capa disponivel"
+            messagebox.showinfo(
+                "Metadata importada",
+                f"Metadata de {candidate.artist} — {candidate.title} importada{cover_message}.",
+            )
+
+        elif etype == "metadata_import_error":
+            messagebox.showerror(
+                "Importacao de metadata",
+                f"Nao foi possivel atualizar {event['pending_item'].title}.\n\n"
+                f"{event.get('message', 'Erro desconhecido.')}",
+            )
+
+        elif etype == "metadata_embedded":
+            self._show_embedded_metadata(event["pending_item"], event["embedded"])
+
+        elif etype == "metadata_embedded_unavailable":
+            self._show_embedded_metadata(event["pending_item"], EmbeddedMetadata())
+
+        elif etype == "metadata_cover_preview":
+            self._show_metadata_cover_preview(
+                event["candidate"], event["data"], event["mime"],
+            )
+
+        elif etype == "metadata_cover_unavailable":
+            self._show_metadata_cover_unavailable(event["candidate"])
+
     def _show_summary(self, s: DownloadSummary) -> None:
         failed = len(s.failed_items)
         pending_metadata = len(s.metadata_pending_items)
@@ -1052,6 +1096,217 @@ class MediaDownloaderApp:
             ]
 
         messagebox.showinfo("Resumo do download", "\n".join(lines))
+        if pending_metadata:
+            self._show_metadata_pending_dialog(s.metadata_pending_items)
+
+    def _show_metadata_pending_dialog(self, pending_items: list[MetadataPendingItem]) -> None:
+        window = ctk.CTkToplevel(self.root)
+        window.title("MP3 com metadata a confirmar")
+        window.geometry("760x480")
+        # A largura minima acompanha o wraplength da linha de motivos: coluna
+        # mais estreita que o texto corta a frase em vez de quebrar a linha.
+        window.minsize(720, 380)
+        window.configure(fg_color=BG_DARK)
+        window.transient(self.root)
+        self._metadata_embedded_labels = {}
+        self._metadata_embedded_images = {}
+
+        ctk.CTkLabel(
+            window, text="Confirmar metadata do MP3 concluido",
+            font=(FONT_FAMILY, 18, "bold"), text_color=CLR_TEXT,
+        ).pack(anchor="w", padx=24, pady=(22, 3))
+        ctk.CTkLabel(
+            window,
+            text=("A previa mostra o que ja esta gravado no arquivo. Busque no catalogo "
+                  "para substituir; a selecao do catalogo, e nao o titulo sugerido, e o "
+                  "que sera importado."),
+            font=(FONT_FAMILY, 11), text_color=CLR_MUTED, wraplength=650, justify="left",
+        ).pack(anchor="w", padx=24, pady=(0, 16))
+
+        items_frame = ctk.CTkScrollableFrame(window, fg_color=BG_CARD, corner_radius=12)
+        items_frame.pack(fill="both", expand=True, padx=24, pady=(0, 22))
+        for pending_item in pending_items:
+            row = ctk.CTkFrame(items_frame, fg_color=BG_INPUT, corner_radius=10)
+            row.pack(fill="x", pady=5, padx=4)
+            row.grid_columnconfigure(1, weight=1)
+
+            cover_label = ctk.CTkLabel(
+                row, text="Lendo\ncapa...", width=COVER_PREVIEW_SIZE, height=COVER_PREVIEW_SIZE,
+                font=(FONT_FAMILY, 9), text_color=CLR_MUTED, fg_color=BG_HOVER,
+                corner_radius=8, justify="center",
+            )
+            cover_label.grid(row=0, column=0, rowspan=3, padx=(10, 4), pady=10)
+            ctk.CTkLabel(
+                row, text=pending_item.title, font=(FONT_FAMILY, 12, "bold"),
+                text_color=CLR_TEXT, anchor="w",
+            ).grid(row=0, column=1, sticky="ew", padx=12, pady=(10, 1))
+            embedded_label = ctk.CTkLabel(
+                row, text="Lendo o que ja esta gravado...",
+                font=(FONT_FAMILY, 10), text_color=CLR_TEXT, anchor="w",
+            )
+            embedded_label.grid(row=1, column=1, sticky="ew", padx=12)
+            ctk.CTkLabel(
+                row, text=metadata_review_detail(pending_item),
+                font=(FONT_FAMILY, 10), text_color=CLR_MUTED, anchor="w",
+                wraplength=340, justify="left",
+            ).grid(row=2, column=1, sticky="ew", padx=12, pady=(1, 10))
+            HoverButton(
+                row, text="Buscar metadata", width=145, height=32,
+                font=(FONT_FAMILY, 11, "bold"),
+                base_color=CLR_ACCENT, hover_color=CLR_ACCENT_DARK,
+                text_color=CLR_TEXT,
+                command=lambda item=pending_item: self._start_metadata_search(item),
+            ).grid(row=0, column=2, rowspan=3, padx=10, pady=10)
+
+            self._metadata_embedded_labels[pending_item.file_path] = (
+                cover_label, embedded_label,
+            )
+            threading.Thread(
+                target=self._manager.load_embedded_metadata,
+                args=(pending_item,), daemon=True,
+            ).start()
+
+    def _show_embedded_metadata(
+        self, pending_item: MetadataPendingItem, embedded: EmbeddedMetadata,
+    ) -> None:
+        labels = self._metadata_embedded_labels.get(pending_item.file_path)
+        if not labels:
+            return
+        cover_label, embedded_label = labels
+        if embedded_label.winfo_exists():
+            gravado = [f"Artista gravado: {embedded.artist or 'nenhum'}"]
+            if embedded.album:
+                gravado.append(f"album: {embedded.album}")
+            embedded_label.configure(text=" · ".join(gravado))
+        if not cover_label.winfo_exists():
+            return
+        image = self._make_cover_image(embedded.cover) if embedded.cover else None
+        if image is None:
+            cover_label.configure(text="Sem capa\nno arquivo")
+            return
+        self._metadata_embedded_images[pending_item.file_path] = image
+        cover_label.configure(image=image, text="")
+
+    @staticmethod
+    def _make_cover_image(data: bytes) -> ctk.CTkImage | None:
+        try:
+            with Image.open(BytesIO(data)) as source:
+                preview = ImageOps.fit(
+                    source.convert("RGB"),
+                    (COVER_PREVIEW_SIZE, COVER_PREVIEW_SIZE),
+                    method=Image.Resampling.LANCZOS,
+                )
+        except Exception:
+            return None
+        return ctk.CTkImage(
+            light_image=preview, dark_image=preview,
+            size=(COVER_PREVIEW_SIZE, COVER_PREVIEW_SIZE),
+        )
+
+    def _start_metadata_search(self, pending_item: MetadataPendingItem) -> None:
+        if self._metadata_thread and self._metadata_thread.is_alive():
+            messagebox.showinfo("Busca de metadata", "Aguarde a busca atual terminar.")
+            return
+        self._metadata_thread = threading.Thread(
+            target=self._manager.search_metadata, args=(pending_item,), daemon=True,
+        )
+        self._metadata_thread.start()
+
+    def _show_metadata_candidates(
+        self, pending_item: MetadataPendingItem, candidates: list[MusicMetadataCandidate],
+    ) -> None:
+        window = ctk.CTkToplevel(self.root)
+        window.title("Resultados de metadata")
+        window.geometry("680x440")
+        window.minsize(560, 320)
+        window.configure(fg_color=BG_DARK)
+        window.transient(self.root)
+        self._metadata_cover_labels = {}
+        self._metadata_cover_images = {}
+
+        ctk.CTkLabel(
+            window, text=f"Resultados para: {pending_item.title}",
+            font=(FONT_FAMILY, 16, "bold"), text_color=CLR_TEXT, wraplength=620,
+            justify="left",
+        ).pack(anchor="w", padx=24, pady=(22, 14))
+
+        if not candidates:
+            ctk.CTkLabel(
+                window,
+                text="Nenhum resultado encontrado. Tente novamente quando tiver mais dados na origem.",
+                font=(FONT_FAMILY, 12), text_color=CLR_MUTED, wraplength=620, justify="left",
+            ).pack(anchor="w", padx=24, pady=(0, 22))
+            return
+
+        candidates_frame = ctk.CTkScrollableFrame(window, fg_color=BG_CARD, corner_radius=12)
+        candidates_frame.pack(fill="both", expand=True, padx=24, pady=(0, 22))
+        for candidate in candidates:
+            row = ctk.CTkFrame(candidates_frame, fg_color=BG_INPUT, corner_radius=10)
+            row.pack(fill="x", pady=5, padx=4)
+            row.grid_columnconfigure(0, weight=1)
+            cover_label = ctk.CTkLabel(
+                row, text="Carregando\ncapa...",
+                width=COVER_PREVIEW_SIZE, height=COVER_PREVIEW_SIZE,
+                font=(FONT_FAMILY, 9), text_color=CLR_MUTED, fg_color=BG_HOVER,
+                corner_radius=8, justify="center",
+            )
+            cover_label.grid(row=0, column=1, rowspan=2, padx=(8, 2), pady=8)
+            self._metadata_cover_labels[candidate.recording_id] = cover_label
+            ctk.CTkLabel(
+                row, text=f"{candidate.artist} — {candidate.title}",
+                font=(FONT_FAMILY, 12, "bold"), text_color=CLR_TEXT, anchor="w",
+            ).grid(row=0, column=0, sticky="ew", padx=12, pady=(9, 1))
+            details = " · ".join(part for part in [candidate.album, candidate.year] if part)
+            ctk.CTkLabel(
+                row, text=details or "Album nao informado",
+                font=(FONT_FAMILY, 10), text_color=CLR_MUTED, anchor="w",
+            ).grid(row=1, column=0, sticky="ew", padx=12, pady=(0, 9))
+            HoverButton(
+                row, text="Importar", width=105, height=32,
+                font=(FONT_FAMILY, 11, "bold"),
+                base_color=CLR_ACCENT, hover_color=CLR_ACCENT_DARK,
+                text_color=CLR_TEXT,
+                command=lambda item=pending_item, result=candidate, dialog=window:
+                    self._start_metadata_import(item, result, dialog),
+            ).grid(row=0, column=2, rowspan=2, padx=10, pady=10)
+
+            threading.Thread(
+                target=self._manager.load_metadata_cover_preview,
+                args=(candidate,), daemon=True,
+            ).start()
+
+    def _show_metadata_cover_preview(
+        self, candidate: MusicMetadataCandidate, data: bytes, _mime: str,
+    ) -> None:
+        label = self._metadata_cover_labels.get(candidate.recording_id)
+        if not label or not label.winfo_exists():
+            return
+        image = self._make_cover_image(data)
+        if image is None:
+            self._show_metadata_cover_unavailable(candidate)
+            return
+        self._metadata_cover_images[candidate.recording_id] = image
+        label.configure(image=image, text="")
+
+    def _show_metadata_cover_unavailable(self, candidate: MusicMetadataCandidate) -> None:
+        label = self._metadata_cover_labels.get(candidate.recording_id)
+        if label and label.winfo_exists():
+            label.configure(image=None, text="Capa\nindisponivel")
+
+    def _start_metadata_import(
+        self,
+        pending_item: MetadataPendingItem,
+        candidate: MusicMetadataCandidate,
+        window: ctk.CTkToplevel,
+    ) -> None:
+        if self._metadata_thread and self._metadata_thread.is_alive():
+            messagebox.showinfo("Importacao de metadata", "Aguarde a operacao atual terminar.")
+            return
+        window.destroy()
+        self._metadata_thread = threading.Thread(
+            target=self._manager.apply_metadata, args=(pending_item, candidate), daemon=True,
+        )
+        self._metadata_thread.start()
 
     # ── State helpers ─────────────────────────────────────────────────────────
 

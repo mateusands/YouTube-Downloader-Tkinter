@@ -7,6 +7,7 @@ Aplicacao desktop com interface grafica (CustomTkinter) para download de video e
 - Download de videos em MP4 (melhor qualidade disponivel)
 - Extracao de audio em MP3 (192 kbps)
 - Opcao de adicionar ao MP3 a capa e os dados disponiveis na plataforma
+- Busca guiada de artista, faixa, album, ano e capa quando um MP3 termina sem dados completos
 - Aceita links HTTP/HTTPS e delega a compatibilidade de cada plataforma ao yt-dlp
 - Deteccao automatica de playlists do YouTube
 - Barra de progresso em tempo real
@@ -26,6 +27,11 @@ para a referencia atual. A compatibilidade de um link especifico depende do site
 - Python 3.10+
 - [FFmpeg](https://ffmpeg.org/) — necessario para conversao de audio/video
 - [Deno](https://deno.com/) — runtime JavaScript usado por alguns extratores do yt-dlp, incluindo o YouTube
+
+Para a opcao de capa e metadata, o aplicativo usa `mutagen`, instalado automaticamente por
+`requirements.txt`. Quando a origem nao oferecer artista ou capa, o app permite pesquisar no catalogo e
+escolher o resultado correto. A sugestao baseada no titulo do video nunca e gravada automaticamente como
+metadata.
 
 ### Instalacao dos requisitos (Windows)
 
@@ -68,14 +74,19 @@ yt/
 
 A pasta `Downloads/` e suas subpastas sao criadas automaticamente ao realizar o primeiro download.
 
-## Screenshots
+## Capa e metadata em MP3
 
-<img width="851" height="639" alt="image" src="https://github.com/user-attachments/assets/c0645424-a871-448f-ad57-84f73e9460bd" />
+Selecione **Audio MP3** e marque **Adicionar capa e metadados** antes de iniciar. O app incorpora os dados
+enviados pela plataforma.
 
-<img width="833" height="646" alt="image" src="https://github.com/user-attachments/assets/81a9c69b-bc59-4c6f-858b-40a77b74819d" />
+Em video comum do YouTube a plataforma nao publica o campo de artista: o yt-dlp grava no MP3 o nome do
+canal (por exemplo `AudioslaveVEVO`) e usa a miniatura do video como capa. Isso e um artista **provisorio**,
+nao um arquivo sem artista — e o que a tela de revisao informa, nomeando o canal que virou tag.
 
-<img width="862" height="666" alt="image" src="https://github.com/user-attachments/assets/be464037-fea4-466e-ae07-3a7639a8a8fe" />
+Esses itens ficam separados das falhas de download. Para cada um, a tela mostra a previa do que ja esta
+gravado no arquivo (capa e artista) e um botao de busca. Os resultados do catalogo aparecem com a capa de
+cada release, priorizando album oficial de estudio; escolha um para importar titulo, artista, album, ano e
+capa. Nada e gravado sem essa escolha — a leitura do titulo serve apenas para formular a busca. Em
+playlists, cada item pendente fica listado individualmente.
 
----
-
-Este projeto e apenas para fins educacionais. O usuario e responsavel por respeitar os termos de uso do YouTube e as leis de direitos autorais.
+Este projeto e apenas para fins educacionais. O usuario e responsavel por respeitar os termos de uso das plataformas e as leis de direitos autorais.
