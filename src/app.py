@@ -134,10 +134,11 @@ class MusicMetadataCandidate:
             f"{credit.get('name', '')}{credit.get('joinphrase', '')}"
             for credit in recording.get("artist-credit", [])
         ) or "Artista desconhecido"
-        releases = sorted(
-            recording.get("releases") or [],
-            key=lambda item: (-_release_quality(item)[0], _release_quality(item)[1]),
-        )
+        def ranking(release: dict[str, Any]) -> tuple[int, str]:
+            quality, date = _release_quality(release)
+            return -quality, date
+
+        releases = sorted(recording.get("releases") or [], key=ranking)
         release = releases[0] if releases else {}
         date = release.get("date") or ""
         return cls(
@@ -210,9 +211,9 @@ class MusicMetadataService:
         self._last_request_at = 0.0
 
     def search(self, suggestion: MusicSearchSuggestion) -> list[MusicMetadataCandidate]:
-        terms = [f'recording:"{suggestion.title}"']
+        terms = [f'recording:"{self._escape_term(suggestion.title)}"']
         if suggestion.artist:
-            terms.append(f'artist:"{suggestion.artist}"')
+            terms.append(f'artist:"{self._escape_term(suggestion.artist)}"')
         # Consulta mais do que exibe: o álbum oficial costuma vir depois de
         # dezenas de gravações de show com a mesma pontuação de busca.
         query = urlencode({
@@ -225,6 +226,11 @@ class MusicMetadataService:
         ]
         candidates.sort(key=lambda candidate: -candidate.quality)
         return candidates[:CATALOG_RESULTS_SHOWN]
+
+    @staticmethod
+    def _escape_term(term: str) -> str:
+        """Protege a frase Lucene: aspas soltas do título encerram a busca cedo."""
+        return term.replace("\\", "\\\\").replace('"', '\\"')
 
     def get_cover_preview(
         self, candidate: MusicMetadataCandidate,

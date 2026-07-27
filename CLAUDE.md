@@ -197,7 +197,11 @@ Conventional Commits: `feat: adiciona escolha de qualidade`, `fix: trata playlis
    `CATALOG_RESULTS_SHOWN` (5) melhores por `_release_quality`. Não reduza o limite da consulta ao número
    exibido.
 
-8. **`wraplength` maior que a coluna corta a frase.** O Tk não encolhe a linha para caber: o texto é
+8. **A consulta do MusicBrainz é Lucene, não texto livre.** Título com aspas (`Best of You "Live"`) fecha a
+   frase no meio e a busca devolve **zero resultados sem erro nenhum** — parece que a faixa não existe no
+   catálogo. `_escape_term` escapa contrabarra e aspas; qualquer termo novo na query precisa passar por ela.
+
+9. **`wraplength` maior que a coluna corta a frase.** O Tk não encolhe a linha para caber: o texto é
    clipado no meio, sem reticências. O `minsize` do diálogo de revisão acompanha o `wraplength` da linha
    de motivos — mexer em um exige mexer no outro.
 

@@ -22,6 +22,10 @@ REGRA DE NEGÓCIO
     ela não afirma que o artista está ausente nem grava a sugestão como tag.
   - A capa de cada candidato é carregada pelo backend e publicada na fila para
     ser mostrada pela UI, sem acesso de rede pela thread gráfica.
+  - O termo vai para a consulta com aspas e contrabarra escapadas. O MusicBrainz
+    usa sintaxe Lucene: `Best of You "Live"` cru fecha a frase no meio e a busca
+    devolve zero resultados sem erro nenhum — o usuário conclui que a faixa não
+    existe no catálogo.
   - A release exibida é a de melhor procedência (oficial, álbum de estúdio),
     não a primeira que o MusicBrainz devolver: buscar "Like a Stone" trazia
     bootlegs de show no topo, todos sem capa no Cover Art Archive, e a prévia
@@ -45,6 +49,10 @@ REGRA DE NEGÓCIO
 """
 
 import queue
+from pathlib import Path
+from urllib.parse import parse_qs, urlparse
+
+import pytest
 
 from app import (
     DownloadManager,
@@ -261,6 +269,32 @@ class TestBuscaNoCatalogo:
         assert [candidate.title for candidate in candidates] == ["Dancing Queen"]
         assert "recording%3A%22Dancing+Queen%22" in urls[0]
         assert "artist%3A%22ABBA%22" in urls[0]
+
+    def test_deve_escapar_aspas_do_titulo_para_nao_quebrar_a_consulta(self):
+        urls = []
+
+        def responder(url: str):
+            urls.append(url)
+            return {"recordings": []}
+
+        service = MusicMetadataService(fetch_json=responder)
+        service.search(MusicSearchSuggestion(title='Best of You "Live"', artist="Foo Fighters"))
+
+        consulta = parse_qs(urlparse(urls[0]).query)["query"][0]
+        assert consulta == 'recording:"Best of You \\"Live\\"" AND artist:"Foo Fighters"'
+
+    def test_deve_escapar_a_contrabarra_antes_das_aspas(self):
+        urls = []
+
+        def responder(url: str):
+            urls.append(url)
+            return {"recordings": []}
+
+        service = MusicMetadataService(fetch_json=responder)
+        service.search(MusicSearchSuggestion(title="AC\\DC"))
+
+        consulta = parse_qs(urlparse(urls[0]).query)["query"][0]
+        assert consulta == 'recording:"AC\\\\DC"'
 
 
 class TestImportacaoDeCandidato:
