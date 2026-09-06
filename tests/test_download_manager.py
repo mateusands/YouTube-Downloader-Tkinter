@@ -6,8 +6,9 @@ CONTRATO
   partir de um dicionário que o yt-dlp devolve num formato variável:
   `_is_playlist_result(info)` — o que veio é mesmo uma playlist?
   `_count_items(info, playlist_mode)` — quantos itens serão baixados?
-  E o `ReportingLogger` traduz warning/error do yt-dlp em `summary.failed_items`,
-  que o resumo final reconcilia com os itens efetivamente baixados.
+  E o `ReportingLogger` traduz a saída do yt-dlp em duas listas distintas:
+  `summary.failed_items` (erro) e `summary.extractor_notices` (aviso), que o
+  resumo final reconcilia com os itens efetivamente baixados.
 
 POR QUE EXISTE
   `ignoreerrors: True` faz o yt-dlp CONTINUAR a playlist quando um item falha e
@@ -24,6 +25,12 @@ REGRA DE NEGÓCIO
   - Entrada `None` numa playlist é buraco, não item.
   - A contagem nunca é zero (mínimo 1), senão a barra de progresso divide por zero.
   - Falha repetida não é listada duas vezes no resumo.
+  - Aviso do extrator não é item que falhou. O alerta de runtime JavaScript
+    ausente aparece em download que conclui inteiro; contá-lo como falha fazia
+    um vídeo só virar "2 item(s) com falha" no resumo.
+  - A mensagem é limpa antes de ser comparada e exibida: a saída do yt-dlp vem
+    colorida, e sem remover o escape ANSI o prefixo não casa, o mesmo erro entra
+    duas vezes e o usuário lê códigos de terminal no diálogo.
   - Se todos os itens previstos foram baixados, diagnósticos do extrator não são
     exibidos como falhas ao usuário.
   - Metadata ausente em MP3 concluído vai para `metadata_pending_items`, separada
@@ -105,12 +112,14 @@ class TestRelatoDeFalhas:
         assert resumo.failed_items == ["Video unavailable"]
         assert fila.qsize() == 1, "o segundo relato não deve gerar novo aviso"
 
-    def test_deve_registrar_warning_como_falha(self):
-        logger, _, resumo = self._logger()
+    def test_deve_registrar_warning_como_aviso_e_nao_como_falha(self):
+        logger, fila, resumo = self._logger()
 
-        logger.warning("Alguma coisa deu errado")
+        logger.warning("WARNING: alguns formatos podem faltar")
 
-        assert resumo.failed_items == ["Alguma coisa deu errado"]
+        assert resumo.failed_items == []
+        assert resumo.extractor_notices == ["alguns formatos podem faltar"]
+        assert fila.empty(), "aviso nao anuncia item que falhou"
 
     def test_nao_deve_registrar_mensagem_vazia(self):
         logger, fila, resumo = self._logger()
@@ -229,3 +238,57 @@ class TestMetadataDeMp3:
         })
 
         assert resumo.metadata_pending_items == []
+
+
+class TestRelatoLimpoDoExtrator:
+    """O que o usuário lê no resumo não é a saída crua do yt-dlp."""
+
+    def _logger(self):
+        resumo = DownloadSummary(total_items=1)
+        return ReportingLogger(queue.Queue(), resumo), resumo
+
+    def test_deve_remover_codigos_de_cor_da_mensagem_relatada(self):
+        logger, resumo = self._logger()
+
+        logger.error("\x1b[0;31mERROR:\x1b[0m unable to download video data: HTTP Error 403")
+
+        assert resumo.failed_items == ["unable to download video data: HTTP Error 403"]
+
+    def test_deve_tratar_como_repetida_a_falha_que_so_difere_na_cor(self):
+        logger, resumo = self._logger()
+
+        logger.error("\x1b[0;31mERROR:\x1b[0m Video unavailable")
+        logger.error("ERROR: Video unavailable")
+
+        assert resumo.failed_items == ["Video unavailable"]
+
+    def test_deve_separar_aviso_do_extrator_da_falha_de_item(self):
+        logger, resumo = self._logger()
+
+        logger.warning("[youtube] No supported JavaScript runtime could be found.")
+        logger.error("ERROR: unable to download video data: HTTP Error 403")
+
+        assert resumo.failed_items == ["unable to download video data: HTTP Error 403"]
+        assert resumo.extractor_notices == [
+            "[youtube] No supported JavaScript runtime could be found."
+        ]
+
+    def test_deve_esquecer_avisos_quando_todos_os_itens_foram_baixados(self):
+        resumo = DownloadSummary(
+            total_items=1,
+            downloaded_count=1,
+            extractor_notices=["[youtube] No supported JavaScript runtime could be found."],
+        )
+
+        DownloadManager._reconcile_failure_reports(resumo)
+
+        assert resumo.extractor_notices == []
+
+
+class TestOpcoesDeSaidaDoExtrator:
+    def test_deve_pedir_saida_sem_cor_para_o_resumo_nao_receber_escapes(self):
+        manager = DownloadManager(queue.Queue())
+
+        opts = manager._build_opts(Path("/tmp/destino"), "mp3", False, DownloadSummary())
+
+        assert opts["no_color"] is True
