@@ -68,6 +68,7 @@ FONT_FAMILY   = "Segoe UI"
 class DownloadSummary:
     downloaded_count: int = 0
     failed_items: list[str] = field(default_factory=list)
+    extractor_notices: list[str] = field(default_factory=list)
     metadata_pending_items: list["MetadataPendingItem"] = field(default_factory=list)
     total_items: int = 0
     target_dir: str = ""
@@ -320,6 +321,9 @@ class MusicMetadataService:
             return response.read(), response.headers.get_content_type()
 
 
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+
+
 class ReportingLogger:
     def __init__(self, event_queue: queue.Queue, summary: DownloadSummary):
         self._q = event_queue
@@ -329,17 +333,29 @@ class ReportingLogger:
         pass
 
     def warning(self, msg: str) -> None:
-        self._capture(msg)
+        # Aviso do extrator não é item que falhou: o alerta de runtime
+        # JavaScript ausente aparece em download que conclui inteiro.
+        self._capture(msg, failure=False)
 
     def error(self, msg: str) -> None:
-        self._capture(msg)
+        self._capture(msg, failure=True)
 
-    def _capture(self, msg: str) -> None:
+    def _capture(self, msg: str, *, failure: bool) -> None:
+        # A saída do yt-dlp vem colorida: sem tirar o escape ANSI, o prefixo não
+        # casa e o resumo mostra "\x1b[0;31mERROR:\x1b[0m ..." como texto.
         # Prefixo sem o espaço: o .strip() anterior já removeu o espaço de
         # "ERROR: " quando a mensagem vinha vazia, e "ERROR:" virava um item.
-        cleaned = msg.strip().removeprefix("ERROR:").strip()
-        if cleaned and cleaned not in self._summary.failed_items:
-            self._summary.failed_items.append(cleaned)
+        cleaned = _ANSI_ESCAPE.sub("", msg).strip()
+        for prefix in ("ERROR:", "WARNING:"):
+            cleaned = cleaned.removeprefix(prefix).strip()
+        if not cleaned:
+            return
+        destination = (
+            self._summary.failed_items if failure else self._summary.extractor_notices)
+        if cleaned in destination:
+            return
+        destination.append(cleaned)
+        if failure:
             self._q.put({"type": "status", "message": "Um item falhou — continuando com os demais..."})
 
 
@@ -476,6 +492,7 @@ class DownloadManager:
             "progress_hooks": [self._make_progress_hook(summary, include_metadata)],
             "quiet": True,
             "no_warnings": True,
+            "no_color": True,
             "concurrent_fragment_downloads": 1,
             "logger": ReportingLogger(self._q, summary),
             "remote_components": ["ejs:github"],
@@ -572,6 +589,7 @@ class DownloadManager:
         """Remove diagnósticos do extrator quando o resultado final foi íntegro."""
         if summary.total_items and summary.downloaded_count >= summary.total_items:
             summary.failed_items.clear()
+            summary.extractor_notices.clear()
 
     def _emit(self, event_type: str, **payload: Any) -> None:
         self._q.put({"type": event_type, **payload})
@@ -1120,6 +1138,9 @@ class MediaDownloaderApp:
         ]
         if failed:
             lines += ["", "Itens com falha:"] + [f"  - {i}" for i in s.failed_items]
+        if s.extractor_notices and (failed or not s.downloaded_count):
+            lines += ["", "Avisos do extrator:"]
+            lines += [f"  - {aviso}" for aviso in s.extractor_notices]
         if pending_metadata:
             lines += ["", "MP3 com metadata a confirmar:"]
             lines += [
