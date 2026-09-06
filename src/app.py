@@ -134,6 +134,7 @@ class MusicMetadataCandidate:
             f"{credit.get('name', '')}{credit.get('joinphrase', '')}"
             for credit in recording.get("artist-credit", [])
         ) or "Artista desconhecido"
+
         def ranking(release: dict[str, Any]) -> tuple[int, str]:
             quality, date = _release_quality(release)
             return -quality, date
@@ -681,6 +682,7 @@ class MediaDownloaderApp:
             "MetadataPendingItem", tuple[ctk.CTkLabel, ctk.CTkLabel, "HoverButton"],
         ] = {}
         self._metadata_embedded_images: dict["MetadataPendingItem", ctk.CTkImage] = {}
+        self._metadata_review_window: ctk.CTkToplevel | None = None
 
         self._build_ui()
         self._center(self._W, self._H)
@@ -1056,6 +1058,7 @@ class MediaDownloaderApp:
             )
 
         elif etype == "metadata_applied":
+            self._resolve_metadata_review(event["pending_item"])
             candidate: MusicMetadataCandidate = event["candidate"]
             cover_message = " com capa incorporada" if event.get("cover_embedded") else " sem capa disponivel"
             messagebox.showinfo(
@@ -1120,6 +1123,7 @@ class MediaDownloaderApp:
         window.minsize(720, 380)
         window.configure(fg_color=BG_DARK)
         window.transient(self.root)
+        self._metadata_review_window = window
         self._metadata_review_rows = {}
         self._metadata_embedded_images = {}
 
@@ -1175,7 +1179,7 @@ class MediaDownloaderApp:
             # caminho (o yt-dlp nem sempre informa o nome do arquivo), e aí a
             # prévia de um sobrescrevia a linha do outro.
             self._metadata_review_rows[pending_item] = (
-                cover_label, embedded_label, search_btn,
+                row, cover_label, embedded_label, search_btn,
             )
             threading.Thread(
                 target=self._manager.load_embedded_metadata,
@@ -1188,7 +1192,7 @@ class MediaDownloaderApp:
         row = self._metadata_review_rows.get(pending_item)
         if not row:
             return
-        cover_label, embedded_label, _ = row
+        _, cover_label, embedded_label, _ = row
         if embedded_label.winfo_exists():
             gravado = [f"Artista gravado: {embedded.artist or 'nenhum'}"]
             if embedded.album:
@@ -1208,7 +1212,7 @@ class MediaDownloaderApp:
         row = self._metadata_review_rows.get(pending_item)
         if not row:
             return
-        cover_label, embedded_label, search_btn = row
+        _, cover_label, embedded_label, search_btn = row
         if cover_label.winfo_exists():
             cover_label.configure(text="Arquivo\nnao lido")
         if embedded_label.winfo_exists():
@@ -1218,6 +1222,19 @@ class MediaDownloaderApp:
             )
         if search_btn.winfo_exists():
             search_btn.configure(state="disabled")
+
+    def _resolve_metadata_review(self, pending_item: MetadataPendingItem) -> None:
+        """Item confirmado sai de cena; sem pendencia restante, a revisao fecha."""
+        row = self._metadata_review_rows.pop(pending_item, None)
+        self._metadata_embedded_images.pop(pending_item, None)
+        if row and row[0].winfo_exists():
+            row[0].destroy()
+        if self._metadata_review_rows:
+            return
+        window = self._metadata_review_window
+        if window is not None and window.winfo_exists():
+            window.destroy()
+        self._metadata_review_window = None
 
     @staticmethod
     def _make_cover_image(data: bytes) -> ctk.CTkImage | None:

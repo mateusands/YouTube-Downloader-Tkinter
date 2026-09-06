@@ -14,10 +14,31 @@ POR QUE EXISTE
 
 REGRA DE NEGÓCIO
   Estilo visual adicional não pode impedir a ação solicitada pelo usuário.
+
+---
+
+SDD — Especificação: encerramento da revisão de metadata
+
+CONTRATO
+  `_resolve_metadata_review(item)` tira da tela a pendência que acabou de ser
+  importada. Sem nenhuma pendência restante, a janela de revisão fecha sozinha.
+
+POR QUE EXISTE
+  Depois de escolher um resultado do catálogo, a janela de candidatos fechava
+  mas a de revisão continuava aberta, oferecendo "Buscar metadata" para um
+  arquivo já resolvido. O usuário tinha que fechar a janela na mão para
+  descobrir que não faltava mais nada.
+
+REGRA DE NEGÓCIO
+  - Só a importação concluída (`metadata_applied`) resolve a linha; erro de
+    importação a mantém, senão a pendência some sem ter sido atendida.
+  - Em playlist, resolver um item não pode fechar a revisão dos outros.
+  - A imagem da capa sai junto com a linha: guardá-la vaza memória por item
+    que não está mais em cena.
 """
 
 import app
-from app import HoverButton, MediaDownloaderApp
+from app import HoverButton, MediaDownloaderApp, MetadataPendingItem
 
 
 class TestAcionamentoDosControles:
@@ -49,3 +70,62 @@ class TestAberturaDaPastaDeDownloads:
 
         assert destino.is_dir()
         assert chamadas == [["xdg-open", str(destino)]]
+
+
+class TestEncerramentoDaRevisaoDeMetadata:
+    """A revisão existe para resolver pendências; item resolvido não fica em cena."""
+
+    class _WidgetFalso:
+        def __init__(self):
+            self.destruido = False
+
+        def winfo_exists(self):
+            return not self.destruido
+
+        def destroy(self):
+            self.destruido = True
+
+    def _aplicativo(self, pendentes):
+        aplicativo = object.__new__(MediaDownloaderApp)
+        aplicativo._metadata_review_rows = {
+            item: (self._WidgetFalso(), self._WidgetFalso(), self._WidgetFalso(),
+                   self._WidgetFalso())
+            for item in pendentes
+        }
+        aplicativo._metadata_embedded_images = {item: object() for item in pendentes}
+        aplicativo._metadata_review_window = self._WidgetFalso()
+        return aplicativo
+
+    def test_deve_fechar_a_revisao_quando_a_ultima_pendencia_foi_importada(self):
+        item = MetadataPendingItem("Paramore - All I Wanted", "/tmp/faixa.mp3", ("artista provisorio: canal Paramore",))
+        aplicativo = self._aplicativo([item])
+        janela = aplicativo._metadata_review_window
+
+        aplicativo._resolve_metadata_review(item)
+
+        assert janela.destruido is True
+        assert aplicativo._metadata_review_rows == {}
+        assert aplicativo._metadata_embedded_images == {}
+
+    def test_deve_manter_a_revisao_aberta_enquanto_houver_outra_pendencia(self):
+        importado = MetadataPendingItem("Faixa A", "/tmp/a.mp3", ("artista ausente",))
+        restante = MetadataPendingItem("Faixa B", "/tmp/b.mp3", ("artista ausente",))
+        aplicativo = self._aplicativo([importado, restante])
+        janela = aplicativo._metadata_review_window
+        linha_importada = aplicativo._metadata_review_rows[importado][0]
+
+        aplicativo._resolve_metadata_review(importado)
+
+        assert linha_importada.destruido is True
+        assert janela.destruido is False
+        assert list(aplicativo._metadata_review_rows) == [restante]
+
+    def test_deve_ignorar_item_que_nao_esta_na_revisao(self):
+        item = MetadataPendingItem("Faixa A", "/tmp/a.mp3", ("artista ausente",))
+        aplicativo = self._aplicativo([item])
+        aplicativo._metadata_review_window = None
+
+        aplicativo._resolve_metadata_review(
+            MetadataPendingItem("Outra", "/tmp/outra.mp3", ("artista ausente",)))
+
+        assert list(aplicativo._metadata_review_rows) == [item]
