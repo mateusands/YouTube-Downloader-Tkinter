@@ -35,6 +35,27 @@ REGRA DE NEGÓCIO
   - Em playlist, resolver um item não pode fechar a revisão dos outros.
   - A imagem da capa sai junto com a linha: guardá-la vaza memória por item
     que não está mais em cena.
+
+---
+
+SDD — Especificação: colar link sobre uma seleção
+
+CONTRATO
+  `_paste_over_selection()` atende ao `<<Paste>>` do campo de link: apaga o
+  trecho selecionado antes de inserir, e devolve "break".
+
+POR QUE EXISTE
+  O binding de classe do Tk no X11 insere no ponto de inserção sem apagar a
+  seleção. Selecionar a URL inteira e apertar Ctrl+V colava o novo link
+  grudado no antigo (`.../AAAhttps://.../BBB`) em vez de substituí-lo.
+  O "break" é parte do contrato: sem ele o binding de classe roda em seguida
+  e insere o texto uma segunda vez.
+
+REGRA DE NEGÓCIO
+  - Sem seleção, colar insere no cursor, como em qualquer campo de texto.
+  - Área de transferência vazia ou não textual deixa o campo intacto.
+  - O botão "Colar" continua substituindo o campo inteiro: ele é atalho para
+    "põe o link aqui", não uma edição pontual.
 """
 
 import app
@@ -129,3 +150,66 @@ class TestEncerramentoDaRevisaoDeMetadata:
             MetadataPendingItem("Outra", "/tmp/outra.mp3", ("artista ausente",)))
 
         assert list(aplicativo._metadata_review_rows) == [item]
+
+
+class TestColarNoCampoDeLink:
+    """Colar sobre uma selecao troca o trecho — o Tk no X11 nao faz isso sozinho."""
+
+    class _EntradaFalsa:
+        def __init__(self, texto="", selecao=None):
+            self.texto = texto
+            self.selecao = selecao
+            self.cursor = len(texto)
+
+        def select_present(self):
+            return self.selecao is not None
+
+        def delete(self, _primeiro, _ultimo=None):
+            inicio, fim = self.selecao
+            self.texto = self.texto[:inicio] + self.texto[fim:]
+            self.cursor = inicio
+            self.selecao = None
+
+        def insert(self, _indice, texto):
+            self.texto = self.texto[:self.cursor] + texto + self.texto[self.cursor:]
+            self.cursor += len(texto)
+
+    class _RaizFalsa:
+        def __init__(self, area_de_transferencia):
+            self._conteudo = area_de_transferencia
+
+        def clipboard_get(self):
+            if self._conteudo is None:
+                raise app.tk.TclError("selection doesn't exist")
+            return self._conteudo
+
+    def _aplicativo(self, entrada, area_de_transferencia):
+        aplicativo = object.__new__(MediaDownloaderApp)
+        aplicativo.url_entry = entrada
+        aplicativo.root = self._RaizFalsa(area_de_transferencia)
+        return aplicativo
+
+    def test_deve_substituir_o_trecho_selecionado_pelo_link_colado(self):
+        entrada = self._EntradaFalsa("https://youtu.be/AAA", selecao=(0, 20))
+        aplicativo = self._aplicativo(entrada, "https://youtu.be/BBB")
+
+        resultado = aplicativo._paste_over_selection()
+
+        assert entrada.texto == "https://youtu.be/BBB"
+        assert resultado == "break"
+
+    def test_deve_inserir_no_cursor_quando_nao_ha_selecao(self):
+        entrada = self._EntradaFalsa("https://youtu.be/", selecao=None)
+        aplicativo = self._aplicativo(entrada, "AAA")
+
+        aplicativo._paste_over_selection()
+
+        assert entrada.texto == "https://youtu.be/AAA"
+
+    def test_deve_manter_o_campo_intacto_quando_a_area_de_transferencia_esta_vazia(self):
+        entrada = self._EntradaFalsa("https://youtu.be/AAA", selecao=(0, 20))
+        aplicativo = self._aplicativo(entrada, None)
+
+        aplicativo._paste_over_selection()
+
+        assert entrada.texto == "https://youtu.be/AAA"

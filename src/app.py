@@ -783,6 +783,7 @@ class MediaDownloaderApp:
         )
         self.paste_btn.grid(row=0, column=1, padx=(0, 4))
 
+        self.url_entry.bind("<<Paste>>", self._paste_over_selection)
         self.url_entry.bind("<FocusIn>", lambda _: input_frame.configure(border_color=CLR_ACCENT))
         self.url_entry.bind("<FocusOut>", lambda _: input_frame.configure(border_color=CLR_BORDER))
 
@@ -818,6 +819,22 @@ class MediaDownloaderApp:
     @staticmethod
     def _open_supported_sites() -> None:
         webbrowser.open_new_tab(SUPPORTED_SITES_URL)
+
+    def _paste_over_selection(self, _event=None) -> str:
+        """Colar troca o trecho selecionado.
+
+        O binding de classe do Tk no X11 insere no cursor sem apagar a seleção,
+        entao colar sobre um link selecionado duplicava a URL. O "break" impede
+        que esse binding rode depois e insira de novo.
+        """
+        try:
+            text = self.root.clipboard_get()
+        except tk.TclError:
+            return "break"
+        if self.url_entry.select_present():
+            self.url_entry.delete("sel.first", "sel.last")
+        self.url_entry.insert("insert", text.strip())
+        return "break"
 
     def _paste_url(self) -> None:
         try:
