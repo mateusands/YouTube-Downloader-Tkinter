@@ -5,11 +5,9 @@ __pycache__/
 Videos/
 Audios/
 Downloads/
-# Caderno de bordo local das sessões (skill finalizar-sessao)
-.claude/sessions/
-
-# Planos locais de produto e implementação
-.claude/plans/
+# Configuração local do assistente: skills, caderno de bordo das sessões e
+# planos de trabalho. Material de apoio, não documentação do repositório.
+.claude/
 
 # Cache do pytest
 .pytest_cache/
