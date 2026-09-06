@@ -86,6 +86,7 @@ media-downloader/
 ├── requirements.txt
 ├── requirements-dev.txt
 ├── .gitignore
+├── LICENSE.md
 └── README.md
 ```
 
@@ -105,5 +106,12 @@ gravado no arquivo (capa e artista) e um botao de busca. Os resultados do catalo
 cada release, priorizando album oficial de estudio; escolha um para importar titulo, artista, album, ano e
 capa. Nada e gravado sem essa escolha — a leitura do titulo serve apenas para formular a busca. Em
 playlists, cada item pendente fica listado individualmente.
+
+## Licenca
+
+Distribuido sob a [Licenca MIT](LICENSE.md). As dependencias de terceiros mantem as licencas
+delas — a nota no fim do arquivo lista quais sao.
+
+## Aviso de uso
 
 Este projeto e apenas para fins educacionais. O usuario e responsavel por respeitar os termos de uso das plataformas e as leis de direitos autorais.
