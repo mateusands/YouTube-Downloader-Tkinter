@@ -40,7 +40,8 @@ REGRA DE NEGÓCIO
 import queue
 from pathlib import Path
 
-from app import DownloadManager, DownloadSummary, ReportingLogger
+from media_downloader.downloader import DownloadManager, ReportingLogger
+from media_downloader.models import DownloadSummary
 
 eh_playlist_resultado = DownloadManager._is_playlist_result
 contar = DownloadManager._count_items

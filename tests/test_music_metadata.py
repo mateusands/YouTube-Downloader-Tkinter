@@ -22,18 +22,18 @@ REGRA DE NEGÓCIO
     ela não afirma que o artista está ausente nem grava a sugestão como tag.
   - A capa de cada candidato é carregada pelo backend e publicada na fila para
     ser mostrada pela UI, sem acesso de rede pela thread gráfica.
-  - O termo vai para a consulta com aspas e contrabarra escapadas. O MusicBrainz
-    usa sintaxe Lucene: `Best of You "Live"` cru fecha a frase no meio e a busca
-    devolve zero resultados sem erro nenhum — o usuário conclui que a faixa não
-    existe no catálogo.
+  - A consulta é texto livre. O iTunes não usa sintaxe de busca, então título
+    com aspas (`Best of You "Live"`) vai cru e funciona — no MusicBrainz isso
+    fechava a frase Lucene no meio e devolvia zero resultados sem erro nenhum.
   - Arquivo inexistente não é arquivo sem tags. `read_embedded` recusa o caminho
     ausente (inclusive o caminho vazio) em vez de devolver metadata vazia, senão
     a interface anuncia "artista gravado: nenhum" para um arquivo que sumiu.
-  - A release exibida é a de melhor procedência (oficial, álbum de estúdio),
-    não a primeira que o MusicBrainz devolver: buscar "Like a Stone" trazia
-    bootlegs de show no topo, todos sem capa no Cover Art Archive, e a prévia
-    ficava sempre vazia. As demais releases da gravação ficam como alternativa
-    para a capa.
+  - Um resultado do iTunes já traz faixa, artista, álbum, ano e a arte numa
+    resposta só; a ordem que o catálogo devolve é respeitada, sem reordenação
+    nossa.
+  - A arte vem em miniatura de 100 px. O tamanho faz parte da URL, então a capa
+    é pedida em `ITUNES_ARTWORK_SIZE`; a extensão do arquivo é preservada, que
+    nem toda arte é `.jpg`.
 
 DIAGNÓSTICO DO ARQUIVO BAIXADO (o motivo desta revisão)
   O yt-dlp só preenche `artist` quando a própria origem publica dado musical —
@@ -57,16 +57,19 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from app import (
-    DownloadManager,
-    EmbeddedMetadata,
-    MetadataPendingItem,
-    MusicMetadataCandidate,
+from media_downloader.config import CATALOG_RESULTS_SHOWN, ITUNES_ARTWORK_SIZE
+from media_downloader.downloader import DownloadManager
+from media_downloader.metadata import (
     MusicMetadataService,
-    MusicSearchSuggestion,
     metadata_review_detail,
     metadata_review_reasons,
     suggest_music_search,
+)
+from media_downloader.models import (
+    EmbeddedMetadata,
+    MetadataPendingItem,
+    MusicMetadataCandidate,
+    MusicSearchSuggestion,
 )
 from mutagen.id3 import APIC, ID3, TPE1
 
@@ -129,175 +132,129 @@ class TestDiagnosticoDoMp3Baixado:
         assert motivos == ("capa ausente",)
 
 
-def _recording(recording_id: str, releases: list[dict]) -> dict:
-    return {
-        "id": recording_id,
-        "title": "Like a Stone",
-        "artist-credit": [{"name": "Audioslave"}],
-        "releases": releases,
-    }
-
-
-_BOOTLEG_AO_VIVO = {
-    "id": "release-bootleg",
-    "title": "2003-03-07: Philadelphia, PA, USA",
-    "status": "Bootleg",
-    "date": "2003",
-    "release-group": {"primary-type": "Album", "secondary-types": ["Live"]},
-}
-_ALBUM_OFICIAL = {
-    "id": "release-oficial",
-    "title": "Audioslave",
-    "status": "Official",
-    "date": "2002-11-19",
-    "release-group": {"primary-type": "Album"},
+_RESULTADO_ITUNES = {
+    "trackId": 265452073,
+    "trackName": "Like a Stone",
+    "artistName": "Audioslave",
+    "collectionName": "Audioslave",
+    "releaseDate": "2002-11-19T08:00:00Z",
+    "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/Music/dj.jpg/100x100bb.jpg",
 }
 
 
 class TestCandidatoDoCatalogo:
-    def test_deve_exibir_dados_da_gravacao_e_da_primeira_release(self):
-        candidate = MusicMetadataCandidate.from_musicbrainz({
-            "id": "recording-id",
-            "title": "Dancing Queen",
-            "artist-credit": [{"name": "ABBA"}],
-            "releases": [{
-                "id": "release-id",
-                "title": "Arrival",
-                "date": "1976-10-11",
-            }],
-        })
+    def test_deve_mapear_faixa_artista_album_e_ano_do_resultado(self):
+        candidate = MusicMetadataCandidate.from_itunes(_RESULTADO_ITUNES)
 
-        assert candidate.recording_id == "recording-id"
-        assert candidate.artist == "ABBA"
-        assert candidate.album == "Arrival"
-        assert candidate.year == "1976"
-        assert candidate.release_id == "release-id"
-
-    def test_deve_preferir_o_album_oficial_ao_bootleg_de_show(self):
-        candidate = MusicMetadataCandidate.from_musicbrainz(
-            _recording("recording-id", [_BOOTLEG_AO_VIVO, _ALBUM_OFICIAL]),
-        )
-
+        assert candidate.track_id == "265452073"
+        assert candidate.title == "Like a Stone"
+        assert candidate.artist == "Audioslave"
         assert candidate.album == "Audioslave"
         assert candidate.year == "2002"
-        assert candidate.release_id == "release-oficial"
 
-    def test_deve_guardar_as_demais_releases_como_alternativa_de_capa(self):
-        candidate = MusicMetadataCandidate.from_musicbrainz(
-            _recording("recording-id", [_BOOTLEG_AO_VIVO, _ALBUM_OFICIAL]),
-        )
+    def test_deve_pedir_a_arte_em_tamanho_util_no_lugar_da_miniatura(self):
+        candidate = MusicMetadataCandidate.from_itunes(_RESULTADO_ITUNES)
 
-        assert candidate.release_ids == ("release-oficial", "release-bootleg")
+        assert candidate.artwork_url.endswith(f"/{ITUNES_ARTWORK_SIZE}x{ITUNES_ARTWORK_SIZE}bb.jpg")
 
+    def test_deve_preservar_a_extensao_da_arte_ao_trocar_o_tamanho(self):
+        candidate = MusicMetadataCandidate.from_itunes(
+            {**_RESULTADO_ITUNES, "artworkUrl100": "https://exemplo.com/arte/100x100bb.png"})
 
-class TestOrdemDosResultados:
-    def _service(self, recordings: list[dict]):
-        urls = []
+        assert candidate.artwork_url == (
+            f"https://exemplo.com/arte/{ITUNES_ARTWORK_SIZE}x{ITUNES_ARTWORK_SIZE}bb.png")
 
-        def responder(url: str):
-            urls.append(url)
-            return {"recordings": recordings}
+    def test_deve_aceitar_resultado_sem_arte(self):
+        candidate = MusicMetadataCandidate.from_itunes(
+            {k: v for k, v in _RESULTADO_ITUNES.items() if k != "artworkUrl100"})
 
-        return MusicMetadataService(fetch_json=responder), urls
+        assert candidate.artwork_url is None
 
-    def test_deve_listar_o_album_oficial_antes_do_registro_de_show(self):
-        service, _ = self._service([
-            _recording("gravacao-bootleg", [_BOOTLEG_AO_VIVO]),
-            _recording("gravacao-oficial", [_ALBUM_OFICIAL]),
-        ])
+    def test_deve_nomear_o_desconhecido_quando_o_resultado_vem_incompleto(self):
+        candidate = MusicMetadataCandidate.from_itunes({"trackId": 1})
 
-        candidates = service.search(MusicSearchSuggestion(title="Like a Stone", artist="Audioslave"))
-
-        assert [candidate.recording_id for candidate in candidates] == [
-            "gravacao-oficial", "gravacao-bootleg",
-        ]
-
-    def test_deve_consultar_alem_do_que_exibe_para_alcancar_a_versao_oficial(self):
-        service, urls = self._service([
-            _recording(f"gravacao-{indice}", [_BOOTLEG_AO_VIVO]) for indice in range(20)
-        ])
-
-        candidates = service.search(MusicSearchSuggestion(title="Like a Stone"))
-
-        assert "limit=25" in urls[0]
-        assert len(candidates) == 5
+        assert candidate.artist == "Artista desconhecido"
+        assert candidate.title == "Faixa sem titulo"
+        assert candidate.album is None
+        assert candidate.year is None
 
 
-class TestCapaComReleaseAlternativa:
-    def test_deve_tentar_a_proxima_release_quando_a_primeira_nao_tem_capa(self):
-        tentativas = []
+class TestCapaDoCandidato:
+    def _candidato(self, artwork_url):
+        return MusicMetadataCandidate(
+            track_id="1", title="Like a Stone", artist="Audioslave",
+            album="Audioslave", year="2002", artwork_url=artwork_url)
 
-        def buscar_capa(release_id: str):
-            tentativas.append(release_id)
-            if release_id == "release-oficial":
-                raise OSError("404")
+    def test_deve_devolver_a_arte_do_candidato(self):
+        pedidos = []
+
+        def buscar(url):
+            pedidos.append(url)
             return b"capa", "image/jpeg"
 
-        service = MusicMetadataService(fetch_cover=buscar_capa)
-        candidate = MusicMetadataCandidate.from_musicbrainz(
-            _recording("recording-id", [_BOOTLEG_AO_VIVO, _ALBUM_OFICIAL]),
-        )
+        service = MusicMetadataService(fetch_cover=buscar)
 
-        assert service.get_cover_preview(candidate) == (b"capa", "image/jpeg")
-        assert tentativas == ["release-oficial", "release-bootleg"]
+        assert service.get_cover_preview(self._candidato("https://exemplo.com/600.jpg")) == (
+            b"capa", "image/jpeg")
+        assert pedidos == ["https://exemplo.com/600.jpg"]
 
-    def test_deve_relatar_ausencia_quando_nenhuma_release_tem_capa(self):
-        def buscar_capa(_release_id: str):
+    def test_deve_relatar_ausencia_quando_o_candidato_nao_tem_arte(self):
+        assert MusicMetadataService().get_cover_preview(self._candidato(None)) is None
+
+    def test_deve_relatar_ausencia_quando_a_arte_nao_pode_ser_baixada(self):
+        def buscar(_url):
             raise OSError("404")
 
-        service = MusicMetadataService(fetch_cover=buscar_capa)
-        candidate = MusicMetadataCandidate.from_musicbrainz(
-            _recording("recording-id", [_BOOTLEG_AO_VIVO]),
-        )
+        service = MusicMetadataService(fetch_cover=buscar)
 
-        assert service.get_cover_preview(candidate) is None
+        assert service.get_cover_preview(self._candidato("https://exemplo.com/600.jpg")) is None
 
 
 class TestBuscaNoCatalogo:
-    def test_deve_transformar_resultados_do_musicbrainz_em_candidatos(self):
+    def _servico(self, resultados):
         urls = []
 
         def responder(url: str):
             urls.append(url)
-            return {"recordings": [{
-                "id": "recording-id",
-                "title": "Dancing Queen",
-                "artist-credit": [{"name": "ABBA"}],
-                "releases": [{"id": "release-id", "title": "Arrival", "date": "1976"}],
-            }]}
+            return {"resultCount": len(resultados), "results": resultados}
 
-        service = MusicMetadataService(fetch_json=responder)
-        candidates = service.search(MusicSearchSuggestion(title="Dancing Queen", artist="ABBA"))
+        return MusicMetadataService(fetch_json=responder), urls
 
-        assert [candidate.title for candidate in candidates] == ["Dancing Queen"]
-        assert "recording%3A%22Dancing+Queen%22" in urls[0]
-        assert "artist%3A%22ABBA%22" in urls[0]
+    def test_deve_transformar_resultados_do_itunes_em_candidatos(self):
+        service, urls = self._servico([_RESULTADO_ITUNES])
 
-    def test_deve_escapar_aspas_do_titulo_para_nao_quebrar_a_consulta(self):
-        urls = []
+        candidates = service.search(
+            MusicSearchSuggestion(title="Like a Stone", artist="Audioslave"))
 
-        def responder(url: str):
-            urls.append(url)
-            return {"recordings": []}
+        assert [candidate.title for candidate in candidates] == ["Like a Stone"]
+        parametros = parse_qs(urlparse(urls[0]).query)
+        assert parametros["term"] == ["Audioslave Like a Stone"]
+        assert parametros["entity"] == ["song"]
+        assert parametros["media"] == ["music"]
 
-        service = MusicMetadataService(fetch_json=responder)
-        service.search(MusicSearchSuggestion(title='Best of You "Live"', artist="Foo Fighters"))
+    def test_deve_buscar_so_pelo_titulo_quando_o_titulo_nao_sugere_artista(self):
+        service, urls = self._servico([])
 
-        consulta = parse_qs(urlparse(urls[0]).query)["query"][0]
-        assert consulta == 'recording:"Best of You \\"Live\\"" AND artist:"Foo Fighters"'
+        service.search(MusicSearchSuggestion(title="Dancing Queen official video"))
 
-    def test_deve_escapar_a_contrabarra_antes_das_aspas(self):
-        urls = []
+        assert parse_qs(urlparse(urls[0]).query)["term"] == ["Dancing Queen official video"]
 
-        def responder(url: str):
-            urls.append(url)
-            return {"recordings": []}
+    def test_deve_mandar_aspas_do_titulo_sem_tratamento_especial(self):
+        # O iTunes recebe texto livre; o escape que o MusicBrainz exigia sumiu.
+        service, urls = self._servico([])
 
-        service = MusicMetadataService(fetch_json=responder)
-        service.search(MusicSearchSuggestion(title="AC\\DC"))
+        service.search(
+            MusicSearchSuggestion(title='Best of You "Live"', artist="Foo Fighters"))
 
-        consulta = parse_qs(urlparse(urls[0]).query)["query"][0]
-        assert consulta == 'recording:"AC\\\\DC"'
+        assert parse_qs(urlparse(urls[0]).query)["term"] == ['Foo Fighters Best of You "Live"']
+
+    def test_deve_limitar_o_que_exibe_ao_numero_de_resultados_mostrados(self):
+        service, urls = self._servico([_RESULTADO_ITUNES] * 10)
+
+        candidates = service.search(MusicSearchSuggestion(title="Like a Stone"))
+
+        assert parse_qs(urlparse(urls[0]).query)["limit"] == [str(CATALOG_RESULTS_SHOWN)]
+        assert len(candidates) == CATALOG_RESULTS_SHOWN
 
 
 class TestImportacaoDeCandidato:
@@ -305,8 +262,8 @@ class TestImportacaoDeCandidato:
         arquivo = tmp_path / "dancing-queen.mp3"
         ID3().save(arquivo)
         candidate = MusicMetadataCandidate(
-            recording_id="recording-id", title="Dancing Queen", artist="ABBA",
-            album="Arrival", year="1976", release_id=None,
+            track_id="265452073", title="Dancing Queen", artist="ABBA",
+            album="Arrival", year="1976", artwork_url=None,
         )
 
         MusicMetadataService().apply_to_mp3(arquivo, candidate)
@@ -321,8 +278,8 @@ class TestImportacaoDeCandidato:
         arquivo = tmp_path / "dancing-queen.mp3"
         ID3().save(arquivo)
         candidate = MusicMetadataCandidate(
-            recording_id="recording-id", title="Dancing Queen", artist="ABBA",
-            album="Arrival", year="1976", release_id="release-id",
+            track_id="265452073", title="Dancing Queen", artist="ABBA",
+            album="Arrival", year="1976", artwork_url="https://exemplo.com/600x600bb.jpg",
         )
         service = MusicMetadataService(fetch_cover=lambda _release_id: (b"capa", "image/jpeg"))
 
@@ -400,8 +357,8 @@ class TestPreviaDoQueJaEstaNoArquivo:
 class TestEventosDeBuscaDeMetadata:
     def test_deve_publicar_candidatos_na_fila_sem_tocar_na_ui(self):
         candidate = MusicMetadataCandidate(
-            recording_id="recording-id", title="Dancing Queen", artist="ABBA",
-            album="Arrival", year="1976", release_id="release-id",
+            track_id="265452073", title="Dancing Queen", artist="ABBA",
+            album="Arrival", year="1976", artwork_url="https://exemplo.com/600x600bb.jpg",
         )
 
         class CatalogoFalso:
@@ -421,8 +378,8 @@ class TestEventosDeBuscaDeMetadata:
 
     def test_deve_publicar_preview_da_capa_na_fila_sem_acessar_a_ui(self):
         candidate = MusicMetadataCandidate(
-            recording_id="recording-id", title="Dancing Queen", artist="ABBA",
-            album="Arrival", year="1976", release_id="release-id",
+            track_id="265452073", title="Dancing Queen", artist="ABBA",
+            album="Arrival", year="1976", artwork_url="https://exemplo.com/600x600bb.jpg",
         )
 
         class CatalogoComCapa:

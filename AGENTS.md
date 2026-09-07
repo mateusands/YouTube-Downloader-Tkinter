@@ -1,4 +1,4 @@
-# CLAUDE.md — Media Downloader
+# AGENTS.md — Media Downloader
 
 ## Propósito do projeto
 
@@ -14,8 +14,8 @@ Projeto de portfólio.
 
 ## Fonte da verdade
 
-**O estado real do sistema é o código.** É um arquivo — `src/app.py` — mas bem separado em
-camadas (ver abaixo). Leia a camada relevante antes de mudar.
+**O estado real do sistema é o código.** Ele vive em `src/media_downloader/`, um módulo por camada
+(ver abaixo). Leia o módulo relevante antes de mudar — não o pacote inteiro.
 
 ---
 
@@ -38,13 +38,27 @@ media-downloader/
 ├── requirements-dev.txt    # + pytest (desenvolvimento)
 ├── pytest.ini              # pythonpath=src, testpaths=tests
 ├── src/
-│   └── app.py              # tudo, em 3 camadas: dados · backend (DownloadManager) · UI (MediaDownloaderApp)
+│   ├── app.py              # ponto de entrada: só monta a janela e chama o mainloop
+│   └── media_downloader/
+│       ├── config.py       # caminhos, serviços externos e limites
+│       ├── theme.py        # paleta e tipografia
+│       ├── models.py       # dados imutáveis que atravessam a fila
+│       ├── metadata.py     # catálogo do iTunes e tags do arquivo
+│       ├── downloader.py   # ReportingLogger e DownloadManager
+│       ├── widgets.py      # FormatCard e HoverButton
+│       └── window.py       # MediaDownloaderApp
 ├── assets/                 # ícone SVG mestre, PNG da UI e ICO para Windows
 └── tests/
-    ├── test_url.py             # validação e classificação de URL
-    └── test_download_manager.py # interpretação do resultado do yt-dlp + relato de falhas
-    └── test_music_metadata.py  # sugestão, catálogo e importação de metadata escolhida
+    ├── test_url.py              # validação e classificação de URL
+    ├── test_caminhos.py         # raiz do repositório para assets e downloads
+    ├── test_download_manager.py # interpretação do resultado do yt-dlp + relato de falhas
+    ├── test_music_metadata.py   # sugestão, catálogo e importação de metadata escolhida
+    └── test_ui_controls.py      # acionamento de controles e diálogos da revisão
 ```
+
+**A dependência entre módulos só corre num sentido:** `window` e `widgets` importam do backend;
+`downloader` e `metadata` nunca importam de `window`, `widgets` ou `theme`. Se você precisar do
+contrário, a regra está na camada errada.
 
 Os downloads vão para `Downloads/` na raiz do repo, em subpastas:
 
@@ -57,29 +71,30 @@ Os downloads vão para `Downloads/` na raiz do repo, em subpastas:
 
 ## Arquitetura — a separação que dá valor a este projeto
 
-O arquivo é único, mas as camadas são de verdade e **não devem ser misturadas**:
+Cada camada é um módulo, e elas **não devem ser misturadas**:
 
-### 1. Dados
+### 1. Dados — `models.py`, `config.py`, `theme.py`
 - `DownloadSummary` (dataclass) — contadores, itens que falharam, pendências de metadata, pasta de destino e modo playlist.
 - `MetadataPendingItem` e `MusicMetadataCandidate` — dados imutáveis que atravessam a fila; nenhum campo
   de tag é inferido e gravado sem confirmação.
 
-### 2. Backend — `DownloadManager`
+### 2. Backend — `downloader.py` e `metadata.py`
 **Não conhece a UI.** Não importa widget, não chama `messagebox`, não toca em `root`. Comunica-se
 exclusivamente por uma `queue.Queue`, publicando eventos com `_emit(tipo, **payload)`.
 
 - `download(url, file_format, include_metadata)` — orquestra: detecta playlist → extrai info → monta opções → baixa
 - `_build_opts(...)` — opções do yt-dlp (formato, template de saída, hooks)
 - `_make_progress_hook(...)` — traduz o progresso do yt-dlp em evento na fila
-- `MusicMetadataService` — pesquisa candidatos no MusicBrainz e incorpora no MP3 apenas o candidato selecionado;
-  busca a capa no Cover Art Archive, tentando as releases da gravação em ordem de procedência.
-  `read_embedded` lê de volta o que já está gravado no arquivo — é a fonte da prévia mostrada na UI.
+- `MusicMetadataService` — pesquisa candidatos na API de busca do iTunes e incorpora no MP3 apenas o
+  candidato selecionado. Uma resposta já traz faixa, artista, álbum, ano e a arte, então não há segunda
+  chamada para capa. `read_embedded` lê de volta o que já está gravado no arquivo — é a fonte da prévia
+  mostrada na UI.
 - `metadata_review_reasons(info)` — diz o que o yt-dlp realmente gravou (artista da origem, artista
   provisório vindo do canal, ou ausente); `metadata_review_detail` transforma isso na frase da UI.
 - `ReportingLogger` — captura warning/error do yt-dlp e acumula em `summary.failed_items`; ao concluir,
   `_reconcile_failure_reports` remove diagnósticos técnicos quando todos os itens previstos baixaram.
 
-### 3. UI — `MediaDownloaderApp`
+### 3. UI — `window.py` e `widgets.py`
 Consome a fila por **polling**: `self.root.after(100, self._poll)` reagenda a cada 100 ms, drenando a
 `queue` com `get_nowait()` e despachando para `_handle(event)`.
 
@@ -188,22 +203,27 @@ Conventional Commits: `feat: adiciona escolha de qualidade`, `fix: trata playlis
    disponibilidade e acesso pertence ao yt-dlp. Não liste plataformas como garantia: a tela mostra exemplos e
    aponta para a lista oficial atualizada.
 
-6. **`BASE_DOWNLOADS_DIR` é relativo ao arquivo** (`Path(__file__).resolve().parent.parent / "Downloads"`),
-   não ao diretório de trabalho. Mover `app.py` de lugar muda onde os downloads caem.
+6. **Os caminhos são relativos ao arquivo que os declara, não ao diretório de trabalho.**
+   `config.py` sobe **três** níveis (`config.py` → `media_downloader` → `src` → raiz) para achar
+   `Downloads/` e `assets/`. Essa armadilha já disparou: ao dividir `app.py` em módulos, a contagem
+   antiga passou a parar em `src/`, o ícone sumiu e a janela não abriu — **com a suíte verde**, porque
+   nenhum teste olhava para caminho. Hoje `tests/test_caminhos.py` cobre isso; mover `config.py` de
+   lugar exige refazer a conta.
 
-7. **A busca do MusicBrainz devolve bootleg antes do álbum.** Para "Like a Stone" as primeiras dezenas de
-   resultados são gravações de show — e bootleg quase nunca tem capa no Cover Art Archive, então a prévia
-   ficava sempre vazia. Por isso a consulta pede `CATALOG_SEARCH_LIMIT` (25) e exibe as
-   `CATALOG_RESULTS_SHOWN` (5) melhores por `_release_quality`. Não reduza o limite da consulta ao número
-   exibido.
+7. **O tamanho da capa do iTunes está na URL, e pedir mais não cria pixel.** A API devolve
+   `artworkUrl100` (miniatura de 100 px); trocar o trecho `100x100bb` pelo tamanho desejado é o que dá a
+   arte utilizável — `ITUNES_ARTWORK_SIZE` (600). Pedir `1200x1200` é aceito e devolve **600×600 real**.
+   A extensão nem sempre é `.jpg`, por isso `_ARTWORK_SIZE_SUFFIX` preserva a que veio em vez de fixar
+   uma no `replace`.
 
-8. **A consulta do MusicBrainz é Lucene, não texto livre.** Título com aspas (`Best of You "Live"`) fecha a
-   frase no meio e a busca devolve **zero resultados sem erro nenhum** — parece que a faixa não existe no
-   catálogo. `_escape_term` escapa contrabarra e aspas; qualquer termo novo na query precisa passar por ela.
+8. **O catálogo do iTunes é comercial.** O que não está à venda na loja — bootleg, lançamento fora das
+   plataformas, gravação rara — simplesmente não aparece, e a busca volta vazia sem erro. É o preço de
+   ter capa quase sempre disponível: a fonte é vitrine, não acervo.
 
 9. **`wraplength` maior que a coluna corta a frase.** O Tk não encolhe a linha para caber: o texto é
-   clipado no meio, sem reticências. O `minsize` do diálogo de revisão acompanha o `wraplength` da linha
-   de motivos — mexer em um exige mexer no outro.
+   clipado no meio, sem reticências. Vale nos **dois** diálogos: o `minsize` da revisão acompanha o
+   `wraplength` da linha de motivos, e o dos resultados acompanha o do título do candidato — que precisa
+   de quebra porque o iTunes devolve nome de faixa longo. Mexer em um exige mexer no outro.
 
 ---
 

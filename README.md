@@ -97,9 +97,18 @@ suite roda sem abrir janela e sem acessar a rede:
 ```
 media-downloader/
 ├── src/
-│   └── app.py
+│   ├── app.py                  # ponto de entrada
+│   └── media_downloader/
+│       ├── config.py           # caminhos, servicos externos e limites
+│       ├── theme.py            # paleta e tipografia
+│       ├── models.py           # dados que atravessam a fila
+│       ├── metadata.py         # catalogo do iTunes e tags do arquivo
+│       ├── downloader.py       # download e relato de falhas
+│       ├── widgets.py          # widgets reutilizaveis
+│       └── window.py           # janela principal
 ├── tests/
 │   ├── test_url.py
+│   ├── test_caminhos.py
 │   ├── test_download_manager.py
 │   ├── test_music_metadata.py
 │   └── test_ui_controls.py
@@ -116,7 +125,7 @@ media-downloader/
 ├── requirements.txt
 ├── requirements-dev.txt
 ├── .gitignore
-├── CLAUDE.md
+├── AGENTS.md
 ├── LICENSE.md
 └── README.md
 ```
@@ -133,16 +142,26 @@ canal (por exemplo `AudioslaveVEVO`) e usa a miniatura do video como capa. Isso 
 nao um arquivo sem artista — e o que a tela de revisao informa, nomeando o canal que virou tag.
 
 Esses itens ficam separados das falhas de download. Para cada um, a tela mostra a previa do que ja esta
-gravado no arquivo (capa e artista) e um botao de busca. Os resultados do catalogo aparecem com a capa de
-cada release, priorizando album oficial de estudio; escolha um para importar titulo, artista, album, ano e
-capa. Nada e gravado sem essa escolha — a leitura do titulo serve apenas para formular a busca. Em
-playlists, cada item pendente fica listado individualmente.
+gravado no arquivo (capa e artista) e um botao de busca. A busca usa a API do iTunes: cada resultado ja
+vem com faixa, artista, album, ano e a capa do album. Escolha um para importar. Nada e gravado sem essa
+escolha — a leitura do titulo serve apenas para formular a busca. Em playlists, cada item pendente fica
+listado individualmente.
 
-## 🤖 AI Usage Disclosure
+O catalogo do iTunes e comercial: cobre bem o que esta a venda nas lojas e nao encontra bootleg,
+lancamento independente fora das plataformas ou gravacao rara.
 
-Transparency and integrity are important to this project. Artificial Intelligence (AI) tools were utilized
-as part of the development and maintenance workflow, strictly serving as an assistant to handle repetitive,
-time-consuming, and low-level tasks.
+## 🤖 Uso de IA
+
+Transparência importa aqui, então: este projeto foi construído com auxílio de inteligência artificial usada
+como assistente ao longo do desenvolvimento e da manutenção.
+
+Na prática, a IA entra no trabalho repetitivo e de baixo nível: escrever o código de um caminho já decidido,
+converter ícones, redigir e atualizar documentação, montar scripts de validação, procurar o ponto exato de um
+defeito. As decisões de escopo, arquitetura e desenho são humanas, e toda mudança passa por revisão de gente
+antes de entrar — inclusive as que a IA escreveu por inteiro.
+
+As regras que o assistente segue neste repositório estão versionadas em [AGENTS.md](AGENTS.md): são as mesmas
+que valem para qualquer pessoa que mexa no código.
 
 ## Licenca
 
