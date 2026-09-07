@@ -40,8 +40,13 @@ REGRA DE NEGÓCIO
 import queue
 from pathlib import Path
 
-from media_downloader.downloader import DownloadManager, ReportingLogger
-from media_downloader.models import DownloadSummary
+from media_downloader.downloader import (
+    FAILURES_SHOWN,
+    DownloadManager,
+    ReportingLogger,
+    summary_lines,
+)
+from media_downloader.models import DownloadSummary, MetadataPendingItem
 
 eh_playlist_resultado = DownloadManager._is_playlist_result
 contar = DownloadManager._count_items
@@ -293,3 +298,60 @@ class TestOpcoesDeSaidaDoExtrator:
         opts = manager._build_opts(Path("/tmp/destino"), "mp3", False, DownloadSummary())
 
         assert opts["no_color"] is True
+
+
+class TestTamanhoDoResumo:
+    """O resumo responde 'o que aconteceu?'; a revisão responde 'o que corrigir?'."""
+
+    def _pendencias(self, quantidade):
+        return [
+            MetadataPendingItem(
+                f"Faixa numero {n} com um titulo bem longo (Official Video)",
+                f"/tmp/faixa{n}.mp3",
+                ("artista provisorio: canal Algum Canal", "capa provisoria: miniatura do video"),
+            )
+            for n in range(quantidade)
+        ]
+
+    def test_deve_contar_a_pendencia_em_vez_de_listar_item_a_item(self):
+        resumo = DownloadSummary(
+            total_items=7, downloaded_count=7,
+            metadata_pending_items=self._pendencias(7),
+        )
+
+        linhas = summary_lines(resumo)
+        texto = "\n".join(linhas)
+
+        assert "7 MP3 com metadata a confirmar" in texto
+        assert "Faixa numero" not in texto, "o detalhe por item pertence à revisão"
+        assert "revisao" in texto.lower(), "o resumo precisa dizer que a revisão vem em seguida"
+
+    def test_deve_manter_o_resumo_curto_mesmo_em_playlist_grande(self):
+        resumo = DownloadSummary(
+            total_items=40, downloaded_count=40,
+            metadata_pending_items=self._pendencias(40),
+        )
+
+        assert len(summary_lines(resumo)) <= 6
+
+    def test_deve_limitar_a_lista_de_falhas_e_dizer_quantas_sobraram(self):
+        resumo = DownloadSummary(
+            total_items=10, downloaded_count=2,
+            failed_items=[f"Video {n} indisponivel" for n in range(8)],
+        )
+
+        linhas = summary_lines(resumo)
+
+        assert sum(1 for l in linhas if l.startswith("  - Video")) == FAILURES_SHOWN
+        assert f"e mais {8 - FAILURES_SHOWN}" in "\n".join(linhas)
+
+    def test_deve_listar_todas_as_falhas_quando_cabem(self):
+        resumo = DownloadSummary(
+            total_items=3, downloaded_count=1,
+            failed_items=["Video privado", "Video removido"],
+        )
+
+        texto = "\n".join(summary_lines(resumo))
+
+        assert "Video privado" in texto and "Video removido" in texto
+        assert "e mais" not in texto

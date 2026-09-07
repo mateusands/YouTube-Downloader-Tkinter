@@ -14,6 +14,39 @@ from .models import DownloadSummary, MetadataPendingItem, MusicMetadataCandidate
 
 _ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 
+# Quantas falhas o resumo lista antes de virar contagem. `messagebox` nao rola:
+# lista longa cresce a caixa ate passar da tela e esconder o proprio botao.
+FAILURES_SHOWN = 5
+
+
+def summary_lines(summary: DownloadSummary) -> list[str]:
+    """Monta o texto do resumo final.
+
+    O resumo responde "o que aconteceu?"; a revisao que abre logo depois
+    responde "o que corrigir?", item a item e com previa da capa. Repetir o
+    detalhe de cada pendencia aqui so fazia a caixa crescer sem informar nada
+    novo — numa playlist de sete faixas ela ja ocupava a tela inteira.
+    """
+    failed = len(summary.failed_items)
+    pending = len(summary.metadata_pending_items)
+    lines = [
+        f"OK  {summary.downloaded_count} item(s) baixado(s) com sucesso",
+        f"--  {failed} item(s) com falha",
+        f"--  {pending} MP3 com metadata a confirmar",
+    ]
+    if failed:
+        lines += ["", "Itens com falha:"]
+        lines += [f"  - {item}" for item in summary.failed_items[:FAILURES_SHOWN]]
+        if failed > FAILURES_SHOWN:
+            lines.append(f"  ... e mais {failed - FAILURES_SHOWN}")
+    if summary.extractor_notices and (failed or not summary.downloaded_count):
+        lines += ["", "Avisos do extrator:"]
+        lines += [f"  - {aviso}" for aviso in summary.extractor_notices[:FAILURES_SHOWN]]
+    if pending:
+        lines += ["", f"A revisao abre em seguida, com {pending} item(s) para confirmar."]
+    return lines
+
+
 class ReportingLogger:
     def __init__(self, event_queue: queue.Queue, summary: DownloadSummary):
         self._q = event_queue

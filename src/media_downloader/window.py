@@ -20,8 +20,7 @@ from .config import (
     SUPPORTED_PLATFORM_NAMES,
     SUPPORTED_SITES_URL,
 )
-from .downloader import DownloadManager
-from .metadata import metadata_review_detail
+from .downloader import DownloadManager, summary_lines
 from .models import DownloadSummary, MusicMetadataCandidate
 from .theme import (
     BG_CARD,
@@ -444,6 +443,7 @@ class MediaDownloaderApp:
             )
 
         elif etype == "metadata_search_error":
+            self._review.search_finished(event["pending_item"])
             messagebox.showerror(
                 "Busca de metadata",
                 f"Nao foi possivel buscar metadata para {event['pending_item'].title}.\n\n"
@@ -489,24 +489,7 @@ class MediaDownloaderApp:
             + (f", {pending_metadata} com metadata a confirmar" if pending_metadata else ""))
         self.info_var.set(f"Destino: {s.target_dir}")
 
-        lines = [
-            f"OK  {s.downloaded_count} item(s) baixado(s) com sucesso",
-            f"--  {failed} item(s) com falha",
-            f"--  {pending_metadata} MP3 com metadata a confirmar",
-        ]
-        if failed:
-            lines += ["", "Itens com falha:"] + [f"  - {i}" for i in s.failed_items]
-        if s.extractor_notices and (failed or not s.downloaded_count):
-            lines += ["", "Avisos do extrator:"]
-            lines += [f"  - {aviso}" for aviso in s.extractor_notices]
-        if pending_metadata:
-            lines += ["", "MP3 com metadata a confirmar:"]
-            lines += [
-                f"  - {item.title} ({metadata_review_detail(item)})"
-                for item in s.metadata_pending_items
-            ]
-
-        messagebox.showinfo("Resumo do download", "\n".join(lines))
+        messagebox.showinfo("Resumo do download", "\n".join(summary_lines(s)))
         if pending_metadata:
             self._review.open(s.metadata_pending_items)
 

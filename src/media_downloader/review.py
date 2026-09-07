@@ -7,6 +7,7 @@ encaminha os eventos da fila para ca.
 """
 
 import threading
+from collections import deque
 from io import BytesIO
 from tkinter import messagebox
 
@@ -38,7 +39,9 @@ class MetadataReview:
     def __init__(self, root: ctk.CTk, manager: DownloadManager):
         self._root = root
         self._manager = manager
-        self._metadata_thread: threading.Thread | None = None
+        self._import_thread: threading.Thread | None = None
+        self._search_queue: deque[MetadataPendingItem] = deque()
+        self._searching: MetadataPendingItem | None = None
         self._metadata_cover_labels: dict[str, ctk.CTkLabel] = {}
         self._metadata_cover_images: dict[str, ctk.CTkImage] = {}
         self._metadata_review_rows: dict[
@@ -186,17 +189,51 @@ class MetadataReview:
         )
 
     def start_search(self, pending_item: MetadataPendingItem) -> None:
-        if self._metadata_thread and self._metadata_thread.is_alive():
-            messagebox.showinfo("Busca de metadata", "Aguarde a busca atual terminar.")
+        """Enfileira em vez de recusar.
+
+        Numa playlist a pessoa clica em varios itens seguidos. Responder
+        "aguarde a busca atual terminar" transformava isso em clicar, esperar,
+        clicar de novo — a fila faz o trabalho que era da pessoa. Uma por vez
+        continua: o catalogo tem limite de requisicoes.
+        """
+        if pending_item == self._searching or pending_item in self._search_queue:
             return
-        self._metadata_thread = threading.Thread(
-            target=self._manager.search_metadata, args=(pending_item,), daemon=True,
-        )
-        self._metadata_thread.start()
+        self._search_queue.append(pending_item)
+        self._mark_search_button(pending_item, "Na fila...", busy=True)
+        self._run_next_search()
+
+    def _run_next_search(self) -> None:
+        if self._searching is not None or not self._search_queue:
+            return
+        pending_item = self._search_queue.popleft()
+        self._searching = pending_item
+        self._mark_search_button(pending_item, "Buscando...", busy=True)
+        self._spawn(self._manager.search_metadata, pending_item)
+
+    def search_finished(self, pending_item: MetadataPendingItem) -> None:
+        """Chamado tanto no resultado quanto no erro — a fila nao pode travar."""
+        if self._searching == pending_item:
+            self._searching = None
+        self._mark_search_button(pending_item, "Buscar metadata", busy=False)
+        self._run_next_search()
+
+    def _mark_search_button(self, pending_item: MetadataPendingItem, text: str, busy: bool) -> None:
+        row = self._metadata_review_rows.get(pending_item)
+        if not row:
+            return
+        botao = row[3]
+        if botao.winfo_exists():
+            botao.configure(text=text, state="disabled" if busy else "normal")
+
+    def _spawn(self, target, *args) -> threading.Thread:
+        thread = threading.Thread(target=target, args=args, daemon=True)
+        thread.start()
+        return thread
 
     def show_candidates(
         self, pending_item: MetadataPendingItem, candidates: list[MusicMetadataCandidate],
     ) -> None:
+        self.search_finished(pending_item)
         window = ctk.CTkToplevel(self._root)
         window.title("Resultados de metadata")
         window.geometry("700x460")
@@ -286,11 +323,8 @@ class MetadataReview:
         candidate: MusicMetadataCandidate,
         window: ctk.CTkToplevel,
     ) -> None:
-        if self._metadata_thread and self._metadata_thread.is_alive():
+        if self._import_thread and self._import_thread.is_alive():
             messagebox.showinfo("Importacao de metadata", "Aguarde a operacao atual terminar.")
             return
         window.destroy()
-        self._metadata_thread = threading.Thread(
-            target=self._manager.apply_metadata, args=(pending_item, candidate), daemon=True,
-        )
-        self._metadata_thread.start()
+        self._import_thread = self._spawn(self._manager.apply_metadata, pending_item, candidate)
