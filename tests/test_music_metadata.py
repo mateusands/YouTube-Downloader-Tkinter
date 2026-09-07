@@ -47,6 +47,12 @@ REGRA DE NEGÓCIO
   - Artista derivado do canal é PROVISÓRIO, não ausente: a revisão nomeia o
     canal que virou tag.
   - Só é "ausente" o que não tem nem origem nem canal.
+  - Capa vinda da miniatura do vídeo é PROVISÓRIA. A miniatura do YouTube é
+    16:9 — um quadro do vídeo, não arte de álbum — e o `EmbedThumbnail` grava
+    ela como está. Tratar "existe miniatura" como "capa resolvida" fechava a
+    revisão e deixava o arquivo com um PNG 1280x720 de 776 KB no lugar da capa.
+  - Sem dimensões declaradas não se afirma nada sobre a capa: o diagnóstico
+    descreve o que foi medido, não o que se supõe.
   - A prévia mostra o que já está gravado no MP3 (artista e capa), lido pelo
     backend e publicado na fila — a thread gráfica não abre arquivo.
 """
@@ -130,6 +136,31 @@ class TestDiagnosticoDoMp3Baixado:
         motivos = metadata_review_reasons({"title": "Dancing Queen", "artist": "ABBA"})
 
         assert motivos == ("capa ausente",)
+
+    def test_deve_apontar_capa_provisoria_quando_a_miniatura_e_do_formato_do_video(self):
+        motivos = metadata_review_reasons({
+            "title": "PinkPantheress - Girl Like Me (Official Video)",
+            "artist": "PinkPantheress",
+            "thumbnails": [{"width": 640, "height": 360}, {"width": 1920, "height": 1080}],
+        })
+
+        assert motivos == ("capa provisoria: miniatura do video",)
+
+    def test_nao_deve_reclamar_da_capa_quando_a_miniatura_e_quadrada(self):
+        motivos = metadata_review_reasons({
+            "title": "Like a Stone", "artist": "Audioslave",
+            "thumbnails": [{"width": 544, "height": 544}],
+        })
+
+        assert motivos == ()
+
+    def test_nao_deve_supor_o_formato_quando_a_miniatura_nao_informa_dimensoes(self):
+        motivos = metadata_review_reasons({
+            "title": "Like a Stone", "artist": "Audioslave",
+            "thumbnail": "https://exemplo.com/capa.jpg",
+        })
+
+        assert motivos == ()
 
 
 _RESULTADO_ITUNES = {

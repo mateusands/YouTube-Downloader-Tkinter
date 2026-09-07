@@ -141,6 +141,10 @@ Em video comum do YouTube a plataforma nao publica o campo de artista: o yt-dlp 
 canal (por exemplo `AudioslaveVEVO`) e usa a miniatura do video como capa. Isso e um artista **provisorio**,
 nao um arquivo sem artista — e o que a tela de revisao informa, nomeando o canal que virou tag.
 
+A capa tambem e provisoria: a miniatura do YouTube e 16:9, um quadro do video, e nao arte de album. Por
+isso a revisao abre tambem quando so a capa esta nessa condicao — e a arte quadrada do catalogo substitui
+o quadro do video na importacao.
+
 Esses itens ficam separados das falhas de download. Para cada um, a tela mostra a previa do que ja esta
 gravado no arquivo (capa e artista) e um botao de busca. A busca usa a API do iTunes: cada resultado ja
 vem com faixa, artista, album, ano e a capa do album. Escolha um para importar. Nada e gravado sem essa

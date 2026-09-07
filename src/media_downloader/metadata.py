@@ -48,9 +48,34 @@ def metadata_review_reasons(info: dict[str, Any]) -> tuple[str, ...]:
         channel = info.get("uploader") or info.get("uploader_id")
         reasons.append(
             f"artista provisorio: canal {channel}" if channel else "artista ausente")
-    if not (info.get("thumbnail") or info.get("thumbnails")):
-        reasons.append("capa ausente")
+    cover = _cover_reason(info)
+    if cover:
+        reasons.append(cover)
     return tuple(reasons)
+
+
+# Arte de album e quadrada. A miniatura do YouTube e 16:9 — um quadro do video —
+# e o EmbedThumbnail grava ela como esta.
+_PROPORCAO_QUADRADA = (0.9, 1.1)
+
+
+def _cover_reason(info: dict[str, Any]) -> str | None:
+    """Diz se a capa embutida resolve ou e so a miniatura da origem."""
+    if not (info.get("thumbnail") or info.get("thumbnails")):
+        return "capa ausente"
+    medidas = [
+        t for t in (info.get("thumbnails") or [])
+        if t.get("width") and t.get("height")
+    ]
+    if not medidas:
+        # Sem dimensoes nao da para afirmar nada: o diagnostico descreve o que
+        # foi medido, nunca o que se supoe.
+        return None
+    maior = max(medidas, key=lambda t: t["width"])
+    proporcao = maior["width"] / maior["height"]
+    if _PROPORCAO_QUADRADA[0] <= proporcao <= _PROPORCAO_QUADRADA[1]:
+        return None
+    return "capa provisoria: miniatura do video"
 
 
 def metadata_review_detail(pending_item: MetadataPendingItem) -> str:

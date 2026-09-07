@@ -120,6 +120,10 @@ O download roda em `threading.Thread(target=self._manager.download, daemon=True)
 - **Não chame de ausente o que está gravado.** O `FFmpegMetadata` do yt-dlp cai para o nome do canal quando
   a origem não publica `artist` — o MP3 sai com artista provisório (`AudioslaveVEVO`), não sem artista.
   A revisão nomeia o canal; dizer "faltam: artista" era falso e foi o que originou `metadata_review_reasons`.
+- **Capa da miniatura é provisória, como o artista do canal.** A miniatura do YouTube é 16:9 — um quadro
+  do vídeo — e o `EmbedThumbnail` grava ela como está. Tratar "existe miniatura" como "capa resolvida"
+  fechava a revisão e deixava o MP3 com um PNG 1280x720 no lugar da arte. `_cover_reason` mede a
+  proporção declarada; sem dimensões, não afirma nada.
 - **A prévia mostra o arquivo, não a suposição.** O que aparece no diálogo de revisão vem de
   `read_embedded`, lido pelo backend numa thread e publicado na fila — a thread gráfica não abre arquivo.
 - **`ignoreerrors: True`** faz o yt-dlp continuar a playlist quando um item falha — por isso existe
