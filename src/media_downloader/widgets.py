@@ -3,6 +3,7 @@
 import customtkinter as ctk
 
 from .theme import (
+    BG_HOVER,
     BG_INPUT,
     CLR_ACCENT,
     CLR_ACCENT_LIGHT,
@@ -75,12 +76,26 @@ class HoverButton(ctk.CTkButton):
                  press_color: str | None = None, **kwargs):
         kwargs.setdefault("cursor", "hand2")
         kwargs.setdefault("corner_radius", 10)
+        kwargs.setdefault("text_color_disabled", CLR_MUTED)
         super().__init__(master, fg_color=base_color, hover_color=hover_color, **kwargs)
         self._base = base_color
         self._hover = hover_color
         self._press = press_color or hover_color
         self.bind("<ButtonPress-1>", self._apply_press_color)
         self.bind("<ButtonRelease-1>", self._restore_base_color)
+
+    def configure(self, require_redraw=False, **kwargs):
+        """Desabilitado apaga o preenchimento, nao so a letra.
+
+        O padrao do CustomTkinter escurece o texto e mantem a cor de destaque
+        no fundo: o botao continua com cara de clicavel e o par texto/fundo cai
+        para um contraste que nao se le.
+        """
+        estado = kwargs.get("state")
+        base = getattr(self, "_base", None)
+        if estado is not None and base is not None and "fg_color" not in kwargs:
+            kwargs["fg_color"] = BG_HOVER if str(estado) == "disabled" else base
+        super().configure(require_redraw, **kwargs)
 
     def _apply_press_color(self, _e=None):
         if str(self.cget("state")) != "disabled":
