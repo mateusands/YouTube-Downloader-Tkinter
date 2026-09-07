@@ -32,6 +32,6 @@ entre eles [yt-dlp](https://github.com/yt-dlp/yt-dlp) (Unlicense),
 [FFmpeg](https://ffmpeg.org/) (LGPL ou GPL, conforme a compilacao). A licenca acima
 cobre apenas o codigo deste repositorio.
 
-Os metadados vem do [MusicBrainz](https://musicbrainz.org/) e as capas do
-[Cover Art Archive](https://coverartarchive.org/); o uso desses servicos segue os
-termos de cada um.
+Os metadados e as capas vem da [API de busca do iTunes](https://itunes.apple.com/search),
+publica e sem autenticacao; o uso segue os termos da Apple. A arte pertence aos
+detentores dos direitos de cada obra e nao e redistribuida por este projeto.

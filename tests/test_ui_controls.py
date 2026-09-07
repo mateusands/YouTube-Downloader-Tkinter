@@ -20,8 +20,10 @@ REGRA DE NEGÓCIO
 SDD — Especificação: encerramento da revisão de metadata
 
 CONTRATO
-  `_resolve_metadata_review(item)` tira da tela a pendência que acabou de ser
+  `MetadataReview.resolve(item)` tira da tela a pendência que acabou de ser
   importada. Sem nenhuma pendência restante, a janela de revisão fecha sozinha.
+  Quem é dono desse estado é `review.py`, não a janela principal: os diálogos
+  abrem e fecham sem ela saber.
 
 POR QUE EXISTE
   Depois de escolher um resultado do catálogo, a janela de candidatos fechava
@@ -58,8 +60,11 @@ REGRA DE NEGÓCIO
     "põe o link aqui", não uma edição pontual.
 """
 
-import app
-from app import HoverButton, MediaDownloaderApp, MetadataPendingItem
+from media_downloader import window
+from media_downloader.models import MetadataPendingItem
+from media_downloader.review import MetadataReview
+from media_downloader.widgets import HoverButton
+from media_downloader.window import MediaDownloaderApp
 
 
 class TestAcionamentoDosControles:
@@ -83,9 +88,9 @@ class TestAberturaDaPastaDeDownloads:
         chamadas = []
         aplicativo = object.__new__(MediaDownloaderApp)
         destino = tmp_path / "Downloads"
-        monkeypatch.setattr(app, "BASE_DOWNLOADS_DIR", destino)
-        monkeypatch.setattr(app.sys, "platform", "linux")
-        monkeypatch.setattr(app.subprocess, "Popen", lambda argumentos: chamadas.append(argumentos))
+        monkeypatch.setattr(window, "BASE_DOWNLOADS_DIR", destino)
+        monkeypatch.setattr(window.sys, "platform", "linux")
+        monkeypatch.setattr(window.subprocess, "Popen", lambda argumentos: chamadas.append(argumentos))
 
         aplicativo.open_downloads_folder()
 
@@ -106,8 +111,8 @@ class TestEncerramentoDaRevisaoDeMetadata:
         def destroy(self):
             self.destruido = True
 
-    def _aplicativo(self, pendentes):
-        aplicativo = object.__new__(MediaDownloaderApp)
+    def _revisao(self, pendentes):
+        aplicativo = object.__new__(MetadataReview)
         aplicativo._metadata_review_rows = {
             item: (self._WidgetFalso(), self._WidgetFalso(), self._WidgetFalso(),
                    self._WidgetFalso())
@@ -119,10 +124,10 @@ class TestEncerramentoDaRevisaoDeMetadata:
 
     def test_deve_fechar_a_revisao_quando_a_ultima_pendencia_foi_importada(self):
         item = MetadataPendingItem("Paramore - All I Wanted", "/tmp/faixa.mp3", ("artista provisorio: canal Paramore",))
-        aplicativo = self._aplicativo([item])
+        aplicativo = self._revisao([item])
         janela = aplicativo._metadata_review_window
 
-        aplicativo._resolve_metadata_review(item)
+        aplicativo.resolve(item)
 
         assert janela.destruido is True
         assert aplicativo._metadata_review_rows == {}
@@ -131,11 +136,11 @@ class TestEncerramentoDaRevisaoDeMetadata:
     def test_deve_manter_a_revisao_aberta_enquanto_houver_outra_pendencia(self):
         importado = MetadataPendingItem("Faixa A", "/tmp/a.mp3", ("artista ausente",))
         restante = MetadataPendingItem("Faixa B", "/tmp/b.mp3", ("artista ausente",))
-        aplicativo = self._aplicativo([importado, restante])
+        aplicativo = self._revisao([importado, restante])
         janela = aplicativo._metadata_review_window
         linha_importada = aplicativo._metadata_review_rows[importado][0]
 
-        aplicativo._resolve_metadata_review(importado)
+        aplicativo.resolve(importado)
 
         assert linha_importada.destruido is True
         assert janela.destruido is False
@@ -143,10 +148,10 @@ class TestEncerramentoDaRevisaoDeMetadata:
 
     def test_deve_ignorar_item_que_nao_esta_na_revisao(self):
         item = MetadataPendingItem("Faixa A", "/tmp/a.mp3", ("artista ausente",))
-        aplicativo = self._aplicativo([item])
+        aplicativo = self._revisao([item])
         aplicativo._metadata_review_window = None
 
-        aplicativo._resolve_metadata_review(
+        aplicativo.resolve(
             MetadataPendingItem("Outra", "/tmp/outra.mp3", ("artista ausente",)))
 
         assert list(aplicativo._metadata_review_rows) == [item]
@@ -180,7 +185,7 @@ class TestColarNoCampoDeLink:
 
         def clipboard_get(self):
             if self._conteudo is None:
-                raise app.tk.TclError("selection doesn't exist")
+                raise window.tk.TclError("selection doesn't exist")
             return self._conteudo
 
     def _aplicativo(self, entrada, area_de_transferencia):
@@ -213,3 +218,98 @@ class TestColarNoCampoDeLink:
         aplicativo._paste_over_selection()
 
         assert entrada.texto == "https://youtu.be/AAA"
+
+
+class TestFilaDeBuscaDeMetadata:
+    """Em playlist a pessoa clica em vários; recusar o segundo clique é ruim."""
+
+    class _BotaoFalso:
+        def __init__(self):
+            self.texto = "Buscar metadata"
+            self.estado = "normal"
+            self.destruido = False
+
+        def winfo_exists(self):
+            return not self.destruido
+
+        def configure(self, **kwargs):
+            self.texto = kwargs.get("text", self.texto)
+            self.estado = kwargs.get("state", self.estado)
+
+        def destroy(self):
+            self.destruido = True
+
+    def _revisao(self, pendentes):
+        from collections import deque
+        from types import SimpleNamespace
+
+        revisao = object.__new__(MetadataReview)
+        # O alvo nunca e chamado: `_spawn` esta trocado. So precisa existir,
+        # como existiria o gerente de verdade.
+        revisao._manager = SimpleNamespace(search_metadata="alvo")
+        revisao._metadata_review_rows = {
+            item: (None, None, None, self._BotaoFalso()) for item in pendentes
+        }
+        revisao._search_queue = deque()
+        revisao._searching = None
+        revisao.iniciadas = []
+        revisao._spawn = lambda alvo, *args: revisao.iniciadas.append(args[0])
+        return revisao
+
+    def _itens(self, quantidade):
+        return [
+            MetadataPendingItem(f"Faixa {n}", f"/tmp/{n}.mp3", ("artista ausente",))
+            for n in range(quantidade)
+        ]
+
+    def _botao(self, revisao, item):
+        return revisao._metadata_review_rows[item][3]
+
+    def test_deve_iniciar_a_primeira_busca_de_imediato(self):
+        um, = self._itens(1)
+        revisao = self._revisao([um])
+
+        revisao.start_search(um)
+
+        assert revisao.iniciadas == [um]
+        assert self._botao(revisao, um).estado == "disabled"
+
+    def test_deve_enfileirar_o_segundo_clique_em_vez_de_recusar(self):
+        um, dois = self._itens(2)
+        revisao = self._revisao([um, dois])
+
+        revisao.start_search(um)
+        revisao.start_search(dois)
+
+        assert revisao.iniciadas == [um], "só uma busca corre por vez"
+        assert "fila" in self._botao(revisao, dois).texto.lower()
+
+    def test_deve_iniciar_a_proxima_quando_a_anterior_termina(self):
+        um, dois = self._itens(2)
+        revisao = self._revisao([um, dois])
+        revisao.start_search(um)
+        revisao.start_search(dois)
+
+        revisao.search_finished(um)
+
+        assert revisao.iniciadas == [um, dois]
+        assert self._botao(revisao, um).estado == "normal"
+
+    def test_deve_ignorar_clique_repetido_no_mesmo_item(self):
+        um, = self._itens(1)
+        revisao = self._revisao([um])
+
+        revisao.start_search(um)
+        revisao.start_search(um)
+
+        assert revisao.iniciadas == [um]
+
+    def test_deve_seguir_a_fila_quando_a_busca_anterior_falha(self):
+        um, dois = self._itens(2)
+        revisao = self._revisao([um, dois])
+        revisao.start_search(um)
+        revisao.start_search(dois)
+
+        revisao.search_finished(um)   # o erro chega pelo mesmo caminho
+
+        assert revisao.iniciadas == [um, dois]

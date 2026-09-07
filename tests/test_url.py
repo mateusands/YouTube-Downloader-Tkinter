@@ -26,7 +26,9 @@ REGRA DE NEGÓCIO
 
 import pytest
 
-from app import DownloadManager, MediaDownloaderApp, SUPPORTED_PLATFORM_NAMES
+from media_downloader.config import SUPPORTED_PLATFORM_NAMES
+from media_downloader.downloader import DownloadManager
+from media_downloader.window import MediaDownloaderApp
 
 valida = MediaDownloaderApp._valid_url
 eh_playlist = DownloadManager._url_is_playlist

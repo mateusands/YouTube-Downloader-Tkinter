@@ -7,7 +7,10 @@ Audios/
 Downloads/
 # Configuração local do assistente: skills, caderno de bordo das sessões e
 # planos de trabalho. Material de apoio, não documentação do repositório.
+# As regras do projeto ficam em AGENTS.md, esse sim versionado; CLAUDE.md é
+# apenas o ponteiro que ferramentas da Anthropic procuram.
 .claude/
+CLAUDE.md
 
 # Cache do pytest
 .pytest_cache/

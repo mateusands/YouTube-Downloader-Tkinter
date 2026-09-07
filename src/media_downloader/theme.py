@@ -1,0 +1,15 @@
+"""Paleta e tipografia da interface dark mode."""
+
+BG_DARK       = "#0f0f0f"
+BG_CARD       = "#1a1a1a"
+BG_INPUT      = "#262626"
+BG_HOVER      = "#2a2a2a"
+CLR_TEXT      = "#ffffff"
+CLR_MUTED     = "#949494"   # 4.73:1 sobre BG_HOVER, a superficie mais escura em que aparece
+CLR_BORDER    = "#333333"
+CLR_ACCENT    = "#6d5dfc"
+CLR_ACCENT_DARK = "#5144d9"
+CLR_ACCENT_LIGHT = "#8b7cff"
+CLR_GREEN     = "#22c55e"
+CLR_ERROR     = "#f87171"   # 5.47:1 sobre BG_INPUT; o #ef4444 ficava em 4.02
+FONT_FAMILY   = "Segoe UI"
